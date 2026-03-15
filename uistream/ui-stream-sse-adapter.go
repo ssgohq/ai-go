@@ -2,7 +2,6 @@ package uistream
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 
 	"github.com/ssgohq/ai-go/internal/engine"
@@ -16,6 +15,9 @@ type Chunk struct {
 
 // Adapter translates a channel of engine.StepEvents into UI message stream chunks.
 // It is transport-agnostic: callers can write to an http.ResponseWriter, a buffer, etc.
+//
+// For custom data-* chunks or source chunks between or after stream events,
+// obtain the Writer via adapter.Writer(w) and call WriteData / WriteSource directly.
 type Adapter struct {
 	msgID string
 
@@ -38,105 +40,107 @@ func NewAdapter(msgID string) *Adapter {
 	}
 }
 
+// Writer returns a direct-write Writer bound to w for emitting custom chunks
+// alongside a stream (e.g. WriteData, WriteSource).
+func (a *Adapter) Writer(w io.Writer) *Writer {
+	return NewWriter(w)
+}
+
 // Stream consumes events from ch and writes SSE lines to w.
 // It returns the full concatenated assistant text for persistence.
 func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
-	a.writeSSE(w, map[string]any{"type": ChunkStart, "messageId": a.msgID})
+	wr := NewWriter(w)
+	wr.WriteStart(a.msgID)
 
 	var fullText string
 
 	for ev := range ch {
 		if ev.Type == engine.StepEventError {
-			a.handleError(w, ev)
+			a.handleError(wr, ev)
 			return fullText
 		}
-		fullText += a.handleEvent(w, ev)
+		fullText += a.handleEvent(wr, ev)
 	}
 
 	return fullText
 }
 
 // handleEvent dispatches a single StepEvent and returns any text delta accumulated.
-func (a *Adapter) handleEvent(w io.Writer, ev engine.StepEvent) string {
+func (a *Adapter) handleEvent(wr *Writer, ev engine.StepEvent) string {
 	switch ev.Type {
 	case engine.StepEventStepStart:
-		a.handleStepStart(w)
+		a.handleStepStart(wr)
 	case engine.StepEventTextDelta:
-		return a.handleTextDelta(w, ev)
+		return a.handleTextDelta(wr, ev)
 	case engine.StepEventReasoningDelta:
-		a.handleReasoningDelta(w, ev)
+		a.handleReasoningDelta(wr, ev)
 	case engine.StepEventToolCallStart:
-		a.handleToolCallStart(w, ev)
+		a.handleToolCallStart(wr, ev)
 	case engine.StepEventToolCallDelta:
-		a.handleToolCallDelta(w, ev)
+		a.handleToolCallDelta(wr, ev)
 	case engine.StepEventToolResult:
-		a.handleToolResult(w, ev)
+		a.handleToolResult(wr, ev)
 	case engine.StepEventStepEnd:
-		a.handleStepEnd(w)
+		a.handleStepEnd(wr)
 	case engine.StepEventDone:
-		a.writeSSE(w, map[string]any{"type": ChunkFinish})
-		fmt.Fprintf(w, "data: [DONE]\n\n")
+		wr.WriteFinish()
 	}
 	return ""
 }
 
-func (a *Adapter) handleStepStart(w io.Writer) {
+func (a *Adapter) handleStepStart(wr *Writer) {
 	a.textBlockCount++
-	a.textBlockID = fmt.Sprintf("text_%d", a.textBlockCount)
+	a.textBlockID = blockID(a.textBlockCount)
 	a.textStarted = false
 	a.reasoningStarted = false
 	a.toolInputStarted = make(map[string]bool)
 	a.toolArgsAccum = make(map[string]string)
-	a.writeSSE(w, map[string]any{"type": ChunkStartStep})
+	wr.WriteChunk(ChunkStartStep, nil)
 }
 
-func (a *Adapter) handleTextDelta(w io.Writer, ev engine.StepEvent) string {
+func (a *Adapter) handleTextDelta(wr *Writer, ev engine.StepEvent) string {
 	if !a.textStarted {
-		a.writeSSE(w, map[string]any{"type": ChunkTextStart, "id": a.textBlockID})
+		wr.WriteChunk(ChunkTextStart, map[string]any{"id": a.textBlockID})
 		a.textStarted = true
 	}
-	a.writeSSE(w, map[string]any{
-		"type":  ChunkTextDelta,
+	wr.WriteChunk(ChunkTextDelta, map[string]any{
 		"id":    a.textBlockID,
 		"delta": ev.TextDelta,
 	})
 	return ev.TextDelta
 }
 
-func (a *Adapter) handleReasoningDelta(w io.Writer, ev engine.StepEvent) {
+func (a *Adapter) handleReasoningDelta(wr *Writer, ev engine.StepEvent) {
 	if !a.reasoningStarted {
-		a.writeSSE(w, map[string]any{"type": ChunkReasoningStart, "id": a.textBlockID})
+		wr.WriteChunk(ChunkReasoningStart, map[string]any{"id": a.textBlockID})
 		a.reasoningStarted = true
 	}
-	a.writeSSE(w, map[string]any{
-		"type":  ChunkReasoningDelta,
+	wr.WriteChunk(ChunkReasoningDelta, map[string]any{
 		"id":    a.textBlockID,
 		"delta": ev.ReasoningDelta,
 	})
 }
 
-func (a *Adapter) handleToolCallStart(w io.Writer, ev engine.StepEvent) {
+func (a *Adapter) handleToolCallStart(wr *Writer, ev engine.StepEvent) {
 	tcID := ev.ToolCallID
 	if tcID == "" {
 		return
 	}
 	a.toolInputStarted[tcID] = true
 	a.toolArgsAccum[tcID] = ev.ToolCallArgsDelta
-	a.writeSSE(w, map[string]any{
-		"type":       ChunkToolInputStart,
+	wr.WriteChunk(ChunkToolInputStart, map[string]any{
 		"toolCallId": tcID,
 		"toolName":   ev.ToolCallName,
 	})
 	if ev.ToolCallArgsDelta != "" {
-		a.writeSSE(w, map[string]any{
-			"type":           ChunkToolInputDelta,
+		wr.WriteChunk(ChunkToolInputDelta, map[string]any{
 			"toolCallId":     tcID,
 			"inputTextDelta": ev.ToolCallArgsDelta,
 		})
 	}
 }
 
-func (a *Adapter) handleToolCallDelta(w io.Writer, ev engine.StepEvent) {
+func (a *Adapter) handleToolCallDelta(wr *Writer, ev engine.StepEvent) {
 	tcID := ev.ToolCallID
 	if !a.toolInputStarted[tcID] || ev.ToolCallArgsDelta == "" {
 		return
@@ -144,15 +148,14 @@ func (a *Adapter) handleToolCallDelta(w io.Writer, ev engine.StepEvent) {
 	existing := a.toolArgsAccum[tcID]
 	if !isValidJSON(existing) {
 		a.toolArgsAccum[tcID] += ev.ToolCallArgsDelta
-		a.writeSSE(w, map[string]any{
-			"type":           ChunkToolInputDelta,
+		wr.WriteChunk(ChunkToolInputDelta, map[string]any{
 			"toolCallId":     tcID,
 			"inputTextDelta": ev.ToolCallArgsDelta,
 		})
 	}
 }
 
-func (a *Adapter) handleToolResult(w io.Writer, ev engine.StepEvent) {
+func (a *Adapter) handleToolResult(wr *Writer, ev engine.StepEvent) {
 	if ev.ToolResult == nil {
 		return
 	}
@@ -162,8 +165,7 @@ func (a *Adapter) handleToolResult(w io.Writer, ev engine.StepEvent) {
 	if err := json.Unmarshal([]byte(tr.Args), &parsedArgs); err != nil {
 		parsedArgs = map[string]string{"raw": tr.Args}
 	}
-	a.writeSSE(w, map[string]any{
-		"type":       ChunkToolInputAvailable,
+	wr.WriteChunk(ChunkToolInputAvailable, map[string]any{
 		"toolCallId": tr.ID,
 		"toolName":   tr.Name,
 		"input":      parsedArgs,
@@ -173,36 +175,50 @@ func (a *Adapter) handleToolResult(w io.Writer, ev engine.StepEvent) {
 	if err := json.Unmarshal([]byte(tr.Output), &parsedOutput); err != nil {
 		parsedOutput = map[string]string{"result": tr.Output}
 	}
-	a.writeSSE(w, map[string]any{
-		"type":       ChunkToolOutputAvailable,
+	wr.WriteChunk(ChunkToolOutputAvailable, map[string]any{
 		"toolCallId": tr.ID,
 		"output":     parsedOutput,
 	})
 }
 
-func (a *Adapter) handleStepEnd(w io.Writer) {
+func (a *Adapter) handleStepEnd(wr *Writer) {
 	if a.textStarted {
-		a.writeSSE(w, map[string]any{"type": ChunkTextEnd, "id": a.textBlockID})
+		wr.WriteChunk(ChunkTextEnd, map[string]any{"id": a.textBlockID})
 	}
 	if a.reasoningStarted {
-		a.writeSSE(w, map[string]any{"type": ChunkReasoningEnd, "id": a.textBlockID})
+		wr.WriteChunk(ChunkReasoningEnd, map[string]any{"id": a.textBlockID})
 	}
-	a.writeSSE(w, map[string]any{"type": ChunkFinishStep})
+	wr.WriteChunk(ChunkFinishStep, nil)
 }
 
-func (a *Adapter) handleError(w io.Writer, ev engine.StepEvent) {
-	a.writeSSE(w, map[string]any{
-		"type":      ChunkError,
-		"errorText": fmt.Sprintf("stream error: %v", ev.Error),
-	})
+func (a *Adapter) handleError(wr *Writer, ev engine.StepEvent) {
+	msg := "stream error"
+	if ev.Error != nil {
+		msg = "stream error: " + ev.Error.Error()
+	}
+	wr.WriteError(msg)
 }
 
-func (a *Adapter) writeSSE(w io.Writer, payload map[string]any) {
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return
+// blockID returns a text block identifier for step n.
+func blockID(n int) string {
+	return "text_" + itoa(n)
+}
+
+// itoa is a minimal int-to-string to avoid importing strconv for this one use.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
 	}
-	fmt.Fprintf(w, "data: %s\n\n", b)
+	digits := make([]byte, 0, 10)
+	for n > 0 {
+		digits = append(digits, byte('0'+n%10))
+		n /= 10
+	}
+	// reverse
+	for i, j := 0, len(digits)-1; i < j; i, j = i+1, j-1 {
+		digits[i], digits[j] = digits[j], digits[i]
+	}
+	return string(digits)
 }
 
 func isValidJSON(s string) bool {

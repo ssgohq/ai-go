@@ -40,6 +40,9 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 
 		var fullText string
 		var lastFinish FinishReason
+		var lastRawFinish string
+		var lastProviderMeta map[string]any
+		var pendingWarnings []Warning
 		acc := newToolCallAccumulator()
 
 		for ev := range eventCh {
@@ -74,8 +77,19 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 			case StreamEventUsage:
 				out <- StepEvent{Type: StepEventUsage, Usage: ev.Usage}
 
+			case StreamEventSource:
+				if ev.Source != nil {
+					out <- StepEvent{Type: StepEventSource, Source: ev.Source}
+				}
+
 			case StreamEventFinish:
 				lastFinish = ev.FinishReason
+				// Propagate finish metadata to step end later (stored temporarily).
+				lastRawFinish = ev.RawFinishReason
+				lastProviderMeta = ev.ProviderMetadata
+				if len(ev.Warnings) > 0 {
+					pendingWarnings = append(pendingWarnings, ev.Warnings...)
+				}
 
 			case StreamEventError:
 				out <- StepEvent{Type: StepEventError, Error: ev.Error}
@@ -84,7 +98,14 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		}
 
 		if !acc.hasToolCalls() {
-			out <- StepEvent{Type: StepEventStepEnd, StepNumber: step, FinishReason: lastFinish}
+			out <- StepEvent{
+				Type:             StepEventStepEnd,
+				StepNumber:       step,
+				FinishReason:     lastFinish,
+				RawFinishReason:  lastRawFinish,
+				ProviderMetadata: lastProviderMeta,
+				Warnings:         pendingWarnings,
+			}
 			emitStructuredOutput(ctx, out, params, history)
 			out <- StepEvent{Type: StepEventDone}
 			return
@@ -103,7 +124,18 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 			toolNames = append(toolNames, tc.name)
 		}
 
-		out <- StepEvent{Type: StepEventStepEnd, StepNumber: step, FinishReason: lastFinish}
+		out <- StepEvent{
+			Type:             StepEventStepEnd,
+			StepNumber:       step,
+			FinishReason:     lastFinish,
+			RawFinishReason:  lastRawFinish,
+			ProviderMetadata: lastProviderMeta,
+			Warnings:         pendingWarnings,
+		}
+		// Reset per-step accumulators.
+		lastRawFinish = ""
+		lastProviderMeta = nil
+		pendingWarnings = nil
 
 		if params.StopWhen != nil {
 			sr := &StepResult{HasToolCalls: true, ToolNames: toolNames, Text: fullText}

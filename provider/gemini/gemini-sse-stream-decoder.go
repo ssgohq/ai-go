@@ -64,7 +64,11 @@ func decodeSSEStream(ctx context.Context, body io.ReadCloser, ch chan<- ai.Strea
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
-			ch <- ai.StreamEvent{Type: ai.StreamEventFinish, FinishReason: ai.FinishReasonStop}
+			ch <- ai.StreamEvent{
+				Type:            ai.StreamEventFinish,
+				FinishReason:    ai.FinishReasonStop,
+				RawFinishReason: "stop",
+			}
 			return
 		}
 
@@ -103,8 +107,9 @@ func emitChunkEvents(chunk openAIStreamChunk, ch chan<- ai.StreamEvent) {
 	// Emit finish reason if present.
 	if choice.FinishReason != "" && choice.FinishReason != "null" {
 		ch <- ai.StreamEvent{
-			Type:         ai.StreamEventFinish,
-			FinishReason: mapFinishReason(choice.FinishReason),
+			Type:            ai.StreamEventFinish,
+			FinishReason:    mapFinishReason(choice.FinishReason),
+			RawFinishReason: choice.FinishReason,
 		}
 	}
 

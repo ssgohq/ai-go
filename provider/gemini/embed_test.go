@@ -68,9 +68,8 @@ func TestEmbedBatch_OrderPreserved(t *testing.T) {
 	}
 }
 
-// TestEmbedBatch_SearchInputs simulates the embedding calls that second-brain-api
-// makes for cross-conversation message search — short query strings that must each
-// receive a full-dimension vector.
+// TestEmbedBatch_SearchInputs simulates typical embedding calls for cross-conversation
+// message search — short query strings that must each receive a full-dimension vector.
 func TestEmbedBatch_SearchInputs(t *testing.T) {
 	const dim = 768
 	srv := makeIndexedServer(t, dim)

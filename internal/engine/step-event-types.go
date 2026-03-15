@@ -20,6 +20,8 @@ const (
 	StepEventStructuredOutput
 	StepEventDone
 	StepEventError
+	// StepEventSource carries a source reference from a provider-native tool.
+	StepEventSource
 )
 
 // StepEvent is a single event emitted by the engine's Run goroutine.
@@ -46,6 +48,15 @@ type StepEvent struct {
 	// Step metadata.
 	StepNumber   int
 	FinishReason FinishReason
+	// RawFinishReason is the unmodified finish reason string from the provider.
+	RawFinishReason string
+	// ProviderMetadata carries provider-specific metadata.
+	ProviderMetadata map[string]any
+	// Warnings carries non-fatal advisories.
+	Warnings []Warning
+
+	// Source is set for StepEventSource events.
+	Source *Source
 
 	// Structured output (final step only).
 	StructuredOutput json.RawMessage
@@ -91,7 +102,25 @@ const (
 	StreamEventUsage
 	StreamEventFinish
 	StreamEventError
+	// StreamEventSource carries a source reference (web search result, document, etc.)
+	StreamEventSource
 )
+
+// Source represents a single source reference from a provider-native tool.
+type Source struct {
+	SourceType       string
+	ID               string
+	URL              string
+	Title            string
+	ProviderMetadata map[string]any
+}
+
+// Warning is a non-fatal advisory from a provider.
+type Warning struct {
+	Type    string
+	Message string
+	Setting string
+}
 
 // StreamEvent is a normalized event from a Model stream.
 type StreamEvent struct {
@@ -105,5 +134,13 @@ type StreamEvent struct {
 	ThoughtSignature  string
 	Usage             *Usage
 	FinishReason      FinishReason
-	Error             error
+	// RawFinishReason is the unmodified finish reason string from the provider.
+	RawFinishReason string
+	// ProviderMetadata carries provider-specific metadata.
+	ProviderMetadata map[string]any
+	// Warnings carries non-fatal advisories from the provider.
+	Warnings []Warning
+	// Source is set for StreamEventSource events.
+	Source *Source
+	Error  error
 }
