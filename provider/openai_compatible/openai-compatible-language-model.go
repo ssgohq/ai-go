@@ -3,8 +3,8 @@ package openai_compatible
 import (
 	"context"
 
-	"github.com/ssgohq/ai-go/ai"
-	"github.com/ssgohq/ai-go/provider/internal/openaichat"
+	"github.com/open-ai-sdk/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/provider/internal/openaichat"
 )
 
 const defaultProviderName = "openaiCompatible"

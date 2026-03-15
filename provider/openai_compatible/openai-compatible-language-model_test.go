@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ssgohq/ai-go/ai"
-	compat "github.com/ssgohq/ai-go/provider/openai_compatible"
+	"github.com/open-ai-sdk/ai-go/ai"
+	compat "github.com/open-ai-sdk/ai-go/provider/openai_compatible"
 )
 
 // sseResponse builds a minimal SSE response body for testing.

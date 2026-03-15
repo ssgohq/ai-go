@@ -1,8 +1,8 @@
 package gemini
 
 import (
-	"github.com/ssgohq/ai-go/ai"
-	"github.com/ssgohq/ai-go/provider/internal/openaichat"
+	"github.com/open-ai-sdk/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/provider/internal/openaichat"
 )
 
 // encodeRequest converts an ai.LanguageModelRequest into a shared ChatRequest

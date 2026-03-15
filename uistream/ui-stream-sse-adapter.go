@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/ssgohq/ai-go/internal/engine"
+	"github.com/open-ai-sdk/ai-go/internal/engine"
 )
 
 // Chunk is a single UI message stream chunk ready for SSE serialization.

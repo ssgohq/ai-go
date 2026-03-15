@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/ssgohq/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/ai"
 )
 
 // responsesChunk represents a single SSE event from the OpenAI Responses API stream.

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ssgohq/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/ai"
 )
 
 // stubEmbeddingModel is a test double for ai.EmbeddingModel.

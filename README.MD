@@ -27,8 +27,8 @@ Go SDK for building AI-powered applications with a unified provider interface.
 
 ```go
 import (
-    "github.com/ssgohq/ai-go/ai"
-    "github.com/ssgohq/ai-go/provider/openai"
+    "github.com/open-ai-sdk/ai-go/ai"
+    "github.com/open-ai-sdk/ai-go/provider/openai"
 )
 
 // OpenAI Chat Completions
@@ -66,7 +66,7 @@ result, _ := ai.GenerateText(ctx, ai.GenerateTextRequest{
 ### Gemini
 
 ```go
-import "github.com/ssgohq/ai-go/provider/gemini"
+import "github.com/open-ai-sdk/ai-go/provider/gemini"
 
 model := gemini.NewLanguageModel("gemini-2.0-flash", gemini.Config{
     APIKey: os.Getenv("GEMINI_API_KEY"),
@@ -76,7 +76,7 @@ model := gemini.NewLanguageModel("gemini-2.0-flash", gemini.Config{
 ### OpenAI-Compatible Provider
 
 ```go
-import "github.com/ssgohq/ai-go/provider/openai_compatible"
+import "github.com/open-ai-sdk/ai-go/provider/openai_compatible"
 
 model := openai_compatible.NewLanguageModel("deepseek-chat", openai_compatible.Config{
     BaseURL: "https://api.deepseek.com/v1",

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ssgohq/ai-go/ai"
-	"github.com/ssgohq/ai-go/provider/internal/openaichat"
+	"github.com/open-ai-sdk/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/provider/internal/openaichat"
 )
 
 func streamFromString(s string) io.ReadCloser {

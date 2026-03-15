@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ssgohq/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/ai"
 )
 
 // helpers
