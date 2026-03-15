@@ -14,10 +14,10 @@ const embedBaseURL = "https://generativelanguage.googleapis.com/v1beta"
 
 // EmbeddingModel implements ai.EmbeddingModel using the Gemini native embedding API.
 type EmbeddingModel struct {
-	modelID             string
-	apiKey              string
+	modelID              string
+	apiKey               string
 	outputDimensionality int
-	client              *http.Client
+	client               *http.Client
 }
 
 // NewEmbeddingModel creates a Gemini-backed ai.EmbeddingModel.
@@ -28,10 +28,10 @@ func NewEmbeddingModel(modelID string, cfg Config) *EmbeddingModel {
 		timeout = 60 * time.Second
 	}
 	return &EmbeddingModel{
-		modelID:             modelID,
-		apiKey:              cfg.APIKey,
+		modelID:              modelID,
+		apiKey:               cfg.APIKey,
 		outputDimensionality: cfg.OutputDimensionality,
-		client:              &http.Client{Timeout: timeout},
+		client:               &http.Client{Timeout: timeout},
 	}
 }
 
