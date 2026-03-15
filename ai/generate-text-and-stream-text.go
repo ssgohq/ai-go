@@ -140,11 +140,17 @@ func toEngineParams(req GenerateTextRequest) engine.RunParams {
 		Settings: engine.CallSettings{
 			Temperature:   req.Settings.Temperature,
 			MaxTokens:     req.Settings.MaxTokens,
+			TopP:          req.Settings.TopP,
+			TopK:          req.Settings.TopK,
+			Seed:          req.Settings.Seed,
 			StopSequences: req.Settings.StopSequences,
 		},
 	}
 	if req.Output != nil {
 		engReq.Output = &engine.OutputSchema{Type: req.Output.Type, Schema: req.Output.Schema}
+	}
+	if req.ToolChoice != nil {
+		engReq.ToolChoice = &engine.ToolChoice{Type: req.ToolChoice.Type, ToolName: req.ToolChoice.ToolName}
 	}
 
 	var engTools *engine.ToolSet
@@ -154,7 +160,7 @@ func toEngineParams(req GenerateTextRequest) engine.RunParams {
 			defs[i] = engine.ToolDefinition{
 				Name:        d.Name,
 				Description: d.Description,
-				Parameters:  d.Parameters,
+				InputSchema: d.InputSchema,
 			}
 		}
 		engTools = &engine.ToolSet{
@@ -200,17 +206,23 @@ func (a *engineModelAdapter) Stream(ctx context.Context, req engine.Request) (<-
 		Settings: CallSettings{
 			Temperature:   req.Settings.Temperature,
 			MaxTokens:     req.Settings.MaxTokens,
+			TopP:          req.Settings.TopP,
+			TopK:          req.Settings.TopK,
+			Seed:          req.Settings.Seed,
 			StopSequences: req.Settings.StopSequences,
 		},
 	}
 	if req.Output != nil {
 		aiReq.Output = &OutputSchema{Type: req.Output.Type, Schema: req.Output.Schema}
 	}
+	if req.ToolChoice != nil {
+		aiReq.ToolChoice = &ToolChoice{Type: req.ToolChoice.Type, ToolName: req.ToolChoice.ToolName}
+	}
 	for _, td := range req.Tools {
 		aiReq.Tools = append(aiReq.Tools, ToolDefinition{
 			Name:        td.Name,
 			Description: td.Description,
-			Parameters:  td.Parameters,
+			InputSchema: td.InputSchema,
 		})
 	}
 
@@ -282,14 +294,26 @@ func toEngineMessages(msgs []Message) []engine.Message {
 func toEngineContentParts(parts []ContentPart) []engine.ContentPart {
 	out := make([]engine.ContentPart, len(parts))
 	for i, p := range parts {
-		ep := engine.ContentPart{Type: string(p.Type), Text: p.Text, ImageURL: p.ImageURL}
-		ep.ToolCallID = p.ToolCallID
-		ep.ToolCallName = p.ToolCallName
+		ep := engine.ContentPart{
+			Type:             string(p.Type),
+			ImageURL:         p.ImageURL,
+			FileURL:          p.FileURL,
+			MimeType:         p.MimeType,
+			ToolCallID:       p.ToolCallID,
+			ToolCallName:     p.ToolCallName,
+			ToolResultID:     p.ToolResultID,
+			ToolResultName:   p.ToolResultName,
+			ToolResultOutput: p.ToolResultOutput,
+		}
+		// "reasoning" parts store their text in ReasoningText; map to the engine's Text field.
+		if p.Type == ContentPartTypeReasoning {
+			ep.Text = p.ReasoningText
+		} else {
+			ep.Text = p.Text
+		}
 		if p.ToolCallArgs != nil {
 			ep.ToolCallArgs = string(p.ToolCallArgs)
 		}
-		ep.ToolResultID = p.ToolResultID
-		ep.ToolResultOutput = p.ToolResultOutput
 		out[i] = ep
 	}
 	return out
@@ -322,12 +346,20 @@ func fromEngineContentParts(parts []engine.ContentPart) []ContentPart {
 	for i, p := range parts {
 		cp := ContentPart{
 			Type:             ContentPartType(p.Type),
-			Text:             p.Text,
 			ImageURL:         p.ImageURL,
+			FileURL:          p.FileURL,
+			MimeType:         p.MimeType,
 			ToolCallID:       p.ToolCallID,
 			ToolCallName:     p.ToolCallName,
 			ToolResultID:     p.ToolResultID,
+			ToolResultName:   p.ToolResultName,
 			ToolResultOutput: p.ToolResultOutput,
+		}
+		// "reasoning" parts map the engine's Text field back to ReasoningText.
+		if p.Type == "reasoning" {
+			cp.ReasoningText = p.Text
+		} else {
+			cp.Text = p.Text
 		}
 		if p.ToolCallArgs != "" {
 			cp.ToolCallArgs = json.RawMessage(p.ToolCallArgs)

@@ -4,15 +4,28 @@ import "encoding/json"
 
 // GenerateTextRequest is the input to GenerateText and StreamText.
 type GenerateTextRequest struct {
-	Model           LanguageModel
-	System          string
-	Messages        []Message
-	Tools           *ToolSet
-	StopWhen        StopCondition
-	Output          *OutputSchema
-	Settings        CallSettings
-	MaxSteps        int
-	ProviderOptions map[string]any // provider-specific options keyed by provider name
+	// Model is the language model to call.
+	Model LanguageModel
+	// System is an optional system prompt prepended before the conversation.
+	System string
+	// Messages is the conversation history.
+	Messages []Message
+	// Tools is an optional set of callable functions for multi-step tool loops.
+	Tools *ToolSet
+	// ToolChoice controls which tool(s) the model may call. Defaults to ToolChoiceAuto.
+	// Ignored when Tools is nil.
+	ToolChoice *ToolChoice
+	// StopWhen is an optional custom stop condition for the tool loop.
+	StopWhen StopCondition
+	// Output optionally constrains the model's output to a JSON schema or mode.
+	Output *OutputSchema
+	// Settings controls per-request model parameters (temperature, maxTokens, etc.).
+	Settings CallSettings
+	// MaxSteps limits the number of tool-loop iterations. Defaults to 10.
+	MaxSteps int
+	// ProviderOptions carries provider-specific options keyed by provider name.
+	// Example: map[string]any{"openai": map[string]any{"previousResponseId": "r_abc"}}.
+	ProviderOptions map[string]any
 }
 
 // StepOutput holds the result of a single tool-loop step.

@@ -18,7 +18,7 @@ type ToolExecutor interface {
 type ToolDefinition struct {
 	Name        string
 	Description string
-	Parameters  map[string]any
+	InputSchema map[string]any
 }
 
 // ToolSet is a collection of tool definitions and an executor.
@@ -34,14 +34,19 @@ type Message struct {
 }
 
 // ContentPart is a single part of a message.
+// Type is one of: "text", "image_url", "file", "tool_call", "tool_result", "reasoning".
 type ContentPart struct {
-	Type string // "text", "image_url", "tool_call", "tool_result"
+	Type string
 
-	// text
+	// text / reasoning
 	Text string
 
 	// image_url
 	ImageURL string
+
+	// file
+	FileURL  string
+	MimeType string
 
 	// tool_call
 	ToolCallID   string
@@ -50,7 +55,16 @@ type ContentPart struct {
 
 	// tool_result
 	ToolResultID     string
+	ToolResultName   string
 	ToolResultOutput string
+}
+
+// ToolChoice controls which tool the model must call.
+type ToolChoice struct {
+	// Type is one of "auto", "none", "required", or "tool".
+	Type string
+	// ToolName is set when Type == "tool".
+	ToolName string
 }
 
 // Request is the engine-internal model request.
@@ -58,9 +72,10 @@ type Request struct {
 	System          string
 	Messages        []Message
 	Tools           []ToolDefinition
+	ToolChoice      *ToolChoice
 	Output          *OutputSchema
 	Settings        CallSettings
-	ProviderOptions map[string]any // provider-specific options keyed by provider name
+	ProviderOptions map[string]any
 }
 
 // OutputSchema describes the desired JSON structure for a structured output call.
@@ -73,6 +88,9 @@ type OutputSchema struct {
 type CallSettings struct {
 	Temperature   *float32
 	MaxTokens     int
+	TopP          *float32
+	TopK          *int
+	Seed          *int
 	StopSequences []string
 }
 

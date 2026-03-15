@@ -285,7 +285,7 @@ func encodeTools(defs []ai.ToolDefinition, opts ProviderOptions) ([]responsesToo
 			Type:        "function",
 			Name:        d.Name,
 			Description: d.Description,
-			Parameters:  d.Parameters,
+			Parameters:  d.InputSchema,
 		})
 	}
 
