@@ -84,7 +84,7 @@ func (m *EmbeddingModel) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 
 // geminiEmbedRequest is a single content entry for batchEmbedContents.
 type geminiEmbedRequest struct {
-	Model   string            `json:"model"`
+	Model   string             `json:"model"`
 	Content geminiEmbedContent `json:"content"`
 }
 

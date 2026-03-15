@@ -9,20 +9,20 @@ import (
 
 // chatRequest is the JSON body sent to the Gemini OpenAI-compatible endpoint.
 type chatRequest struct {
-	Model          string         `json:"model"`
+	Model          string           `json:"model"`
 	Messages       []map[string]any `json:"messages"`
-	Stream         bool           `json:"stream"`
-	StreamOptions  map[string]any `json:"stream_options,omitempty"`
-	Temperature    float32        `json:"temperature,omitempty"`
-	MaxTokens      int            `json:"max_tokens,omitempty"`
+	Stream         bool             `json:"stream"`
+	StreamOptions  map[string]any   `json:"stream_options,omitempty"`
+	Temperature    float32          `json:"temperature,omitempty"`
+	MaxTokens      int              `json:"max_tokens,omitempty"`
 	Tools          []map[string]any `json:"tools,omitempty"`
-	ToolChoice     string         `json:"tool_choice,omitempty"`
-	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	ToolChoice     string           `json:"tool_choice,omitempty"`
+	ResponseFormat *responseFormat  `json:"response_format,omitempty"`
 }
 
 type responseFormat struct {
-	Type       string          `json:"type"`
-	JSONSchema *jsonSchemaRef  `json:"json_schema,omitempty"`
+	Type       string         `json:"type"`
+	JSONSchema *jsonSchemaRef `json:"json_schema,omitempty"`
 }
 
 type jsonSchemaRef struct {
@@ -125,11 +125,15 @@ func encodeContentMessage(m ai.Message) (map[string]any, error) {
 			// Encode non-image files as base64 data URIs when possible.
 			url := part.FileURL
 			if strings.HasPrefix(url, "data:") {
-				parts = append(parts, map[string]any{"type": "text",
-					"text": fmt.Sprintf("[file: %s]", part.MimeType)})
+				parts = append(parts, map[string]any{
+					"type": "text",
+					"text": fmt.Sprintf("[file: %s]", part.MimeType),
+				})
 			} else {
-				parts = append(parts, map[string]any{"type": "text",
-					"text": fmt.Sprintf("[file url: %s]", url)})
+				parts = append(parts, map[string]any{
+					"type": "text",
+					"text": fmt.Sprintf("[file url: %s]", url),
+				})
 			}
 		case ai.ContentPartTypeToolCall:
 			call := map[string]any{
@@ -188,4 +192,3 @@ func encodeOutputSchema(o *ai.OutputSchema) *responseFormat {
 		},
 	}
 }
-
