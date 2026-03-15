@@ -185,7 +185,7 @@ func TestEmbed_DelegatesToBatch(t *testing.T) {
 // TestBuildBatchEmbedRequest_ModelPrefix verifies that model IDs are prefixed
 // with "models/" as required by the Gemini batchEmbedContents API.
 func TestBuildBatchEmbedRequest_ModelPrefix(t *testing.T) {
-	data, err := buildBatchEmbedRequest("text-embedding-004", []string{"x"})
+	data, err := buildBatchEmbedRequest("text-embedding-004", []string{"x"}, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -15,11 +15,12 @@ type LanguageModel struct {
 	core *openaichat.LanguageModel
 }
 
-// Config holds options for constructing a Gemini LanguageModel.
+// Config holds options for constructing a Gemini LanguageModel or EmbeddingModel.
 type Config struct {
-	APIKey  string
-	BaseURL string // optional; defaults to Gemini production endpoint
-	Timeout time.Duration
+	APIKey               string
+	BaseURL              string        // optional; defaults to Gemini production endpoint
+	Timeout              time.Duration // optional; defaults to 120s for LLM, 60s for embedding
+	OutputDimensionality int           // optional; embedding output dimensions (768, 1536, 3072)
 }
 
 // NewLanguageModel creates a Gemini-backed ai.LanguageModel.
