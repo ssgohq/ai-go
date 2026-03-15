@@ -56,6 +56,8 @@ type ContentPart struct {
 	ToolCallName string
 	// ToolCallArgs is the JSON-encoded arguments when Type == ContentPartTypeToolCall.
 	ToolCallArgs json.RawMessage
+	// ThoughtSignature is the Gemini thought signature for multi-turn tool calls.
+	ThoughtSignature string
 
 	// ToolResultID matches the ToolCallID that this result answers (Type == ContentPartTypeToolResult).
 	ToolResultID string

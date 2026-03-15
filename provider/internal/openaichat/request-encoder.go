@@ -172,6 +172,13 @@ func encodeContentMessage(m ai.Message) (map[string]any, error) {
 					"arguments": string(part.ToolCallArgs),
 				},
 			}
+			if part.ThoughtSignature != "" {
+				call["extra_content"] = map[string]any{
+					"google": map[string]any{
+						"thought_signature": part.ThoughtSignature,
+					},
+				}
+			}
 			toolCalls = append(toolCalls, call)
 		case ai.ContentPartTypeReasoning:
 			// Reasoning parts are provider-specific; most OpenAI-compatible APIs do not

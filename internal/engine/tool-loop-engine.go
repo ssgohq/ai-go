@@ -182,10 +182,11 @@ func buildAssistantToolCallMessage(text string, calls []toolCallState) Message {
 	}
 	for _, tc := range calls {
 		parts = append(parts, ContentPart{
-			Type:         "tool_call",
-			ToolCallID:   tc.id,
-			ToolCallName: tc.name,
-			ToolCallArgs: tc.args,
+			Type:             "tool_call",
+			ToolCallID:       tc.id,
+			ToolCallName:     tc.name,
+			ToolCallArgs:     tc.args,
+			ThoughtSignature: tc.thoughtSignature,
 		})
 	}
 	return Message{Role: "assistant", Content: parts}

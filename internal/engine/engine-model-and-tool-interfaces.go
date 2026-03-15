@@ -49,9 +49,10 @@ type ContentPart struct {
 	MimeType string
 
 	// tool_call
-	ToolCallID   string
-	ToolCallName string
-	ToolCallArgs string // JSON string
+	ToolCallID       string
+	ToolCallName     string
+	ToolCallArgs     string // JSON string
+	ThoughtSignature string // Gemini thought signature for multi-turn
 
 	// tool_result
 	ToolResultID     string
