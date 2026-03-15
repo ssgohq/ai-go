@@ -77,7 +77,8 @@ func decodeResponsesNonStream(body []byte, warnings []ai.Warning) (*ai.GenerateT
 		}
 	}
 
-	result.FinishReason = mapResponsesFinishReason(resp.Status, len(result.Steps) > 0 && len(result.Steps[0].ToolCalls) > 0)
+	hasToolCalls := len(result.Steps) > 0 && len(result.Steps[0].ToolCalls) > 0
+	result.FinishReason = mapResponsesFinishReason(resp.Status, hasToolCalls)
 	result.RawFinishReason = resp.Status
 	result.ProviderMetadata = map[string]any{
 		"openai": map[string]any{

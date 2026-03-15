@@ -131,7 +131,9 @@ func (fc *fileClient) upload(ctx context.Context, req UploadFileRequest) (*Uploa
 }
 
 // buildMultipartBody constructs the multipart/form-data body for the /v1/files endpoint.
-func buildMultipartBody(filename string, purpose FilePurpose, data []byte, mimeType string) (*bytes.Buffer, string, error) {
+func buildMultipartBody(
+	filename string, purpose FilePurpose, data []byte, mimeType string,
+) (*bytes.Buffer, string, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 

@@ -79,7 +79,10 @@ type pendingCall struct {
 // normalized ai.StreamEvents onto ch. Closes ch when done or on error.
 // encodingWarnings are merged onto the finish event so callers see them in the
 // GenerateTextResult.Warnings field without a separate event.
-func decodeResponsesSSEStream(ctx context.Context, body io.ReadCloser, ch chan<- ai.StreamEvent, encodingWarnings ...ai.Warning) {
+func decodeResponsesSSEStream(
+	ctx context.Context, body io.ReadCloser, ch chan<- ai.StreamEvent,
+	encodingWarnings ...ai.Warning,
+) {
 	defer close(ch)
 	defer body.Close()
 
@@ -129,7 +132,12 @@ func decodeResponsesSSEStream(ctx context.Context, body io.ReadCloser, ch chan<-
 
 // dispatchChunk routes a single SSE chunk to the appropriate handler.
 // Returns true if the stream should terminate.
-func dispatchChunk(chunk responsesChunk, state *streamState, ch chan<- ai.StreamEvent, encodingWarnings []ai.Warning) bool {
+func dispatchChunk(
+	chunk responsesChunk,
+	state *streamState,
+	ch chan<- ai.StreamEvent,
+	encodingWarnings []ai.Warning,
+) bool {
 	switch chunk.Type {
 	case "response.created":
 		if chunk.Response != nil {
@@ -183,7 +191,12 @@ func dispatchChunk(chunk responsesChunk, state *streamState, ch chan<- ai.Stream
 	return false
 }
 
-func handleResponseCompleted(chunk responsesChunk, state *streamState, ch chan<- ai.StreamEvent, encodingWarnings []ai.Warning) {
+func handleResponseCompleted(
+	chunk responsesChunk,
+	state *streamState,
+	ch chan<- ai.StreamEvent,
+	encodingWarnings []ai.Warning,
+) {
 	if chunk.Response == nil {
 		return
 	}
