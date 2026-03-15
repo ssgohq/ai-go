@@ -137,7 +137,7 @@ func TestEmbeddingModel_HTTPError(t *testing.T) {
 
 func TestBuildBatchEmbedRequest(t *testing.T) {
 	texts := []string{"a", "b"}
-	data, err := buildBatchEmbedRequest("text-embedding-004", texts)
+	data, err := buildBatchEmbedRequest("text-embedding-004", texts, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -14,22 +14,24 @@ const embedBaseURL = "https://generativelanguage.googleapis.com/v1beta"
 
 // EmbeddingModel implements ai.EmbeddingModel using the Gemini native embedding API.
 type EmbeddingModel struct {
-	modelID string
-	apiKey  string
-	client  *http.Client
+	modelID              string
+	apiKey               string
+	outputDimensionality int
+	client               *http.Client
 }
 
 // NewEmbeddingModel creates a Gemini-backed ai.EmbeddingModel.
-// modelID should be e.g. "text-embedding-004".
+// modelID should be e.g. "text-embedding-004" or "gemini-embedding-001".
 func NewEmbeddingModel(modelID string, cfg Config) *EmbeddingModel {
 	timeout := cfg.Timeout
 	if timeout == 0 {
 		timeout = 60 * time.Second
 	}
 	return &EmbeddingModel{
-		modelID: modelID,
-		apiKey:  cfg.APIKey,
-		client:  &http.Client{Timeout: timeout},
+		modelID:              modelID,
+		apiKey:               cfg.APIKey,
+		outputDimensionality: cfg.OutputDimensionality,
+		client:               &http.Client{Timeout: timeout},
 	}
 }
 
@@ -52,7 +54,7 @@ func (m *EmbeddingModel) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 		return nil, nil
 	}
 
-	reqBody, err := buildBatchEmbedRequest(m.modelID, texts)
+	reqBody, err := buildBatchEmbedRequest(m.modelID, texts, m.outputDimensionality)
 	if err != nil {
 		return nil, fmt.Errorf("gemini embed: build request: %w", err)
 	}
@@ -84,8 +86,9 @@ func (m *EmbeddingModel) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 
 // geminiEmbedRequest is a single content entry for batchEmbedContents.
 type geminiEmbedRequest struct {
-	Model   string             `json:"model"`
-	Content geminiEmbedContent `json:"content"`
+	Model                string             `json:"model"`
+	Content              geminiEmbedContent `json:"content"`
+	OutputDimensionality int                `json:"outputDimensionality,omitempty"`
 }
 
 type geminiEmbedContent struct {
@@ -106,7 +109,9 @@ type geminiBatchEmbedResponse struct {
 	} `json:"embeddings"`
 }
 
-func buildBatchEmbedRequest(modelID string, texts []string) ([]byte, error) {
+func buildBatchEmbedRequest(
+	modelID string, texts []string, outputDims int,
+) ([]byte, error) {
 	reqs := make([]geminiEmbedRequest, len(texts))
 	for i, t := range texts {
 		reqs[i] = geminiEmbedRequest{
@@ -114,6 +119,7 @@ func buildBatchEmbedRequest(modelID string, texts []string) ([]byte, error) {
 			Content: geminiEmbedContent{
 				Parts: []geminiEmbedPart{{Text: t}},
 			},
+			OutputDimensionality: outputDims,
 		}
 	}
 	return json.Marshal(geminiBatchEmbedRequest{Requests: reqs})
