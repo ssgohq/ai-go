@@ -1,5 +1,5 @@
 // Package uistream provides an SSE adapter that translates engine.StepEvents into
-// the AI SDK UI message stream wire format consumed by second-brain-api frontends.
+// the AI SDK UI message stream wire format.
 package uistream
 
 // Chunk type names as used in the x-vercel-ai-ui-message-stream protocol.
@@ -19,4 +19,8 @@ const (
 	ChunkFinishStep          = "finish-step"
 	ChunkFinish              = "finish"
 	ChunkError               = "error"
+
+	// Source chunks for web search results and citations.
+	ChunkSource  = "source"
+	ChunkSources = "sources"
 )

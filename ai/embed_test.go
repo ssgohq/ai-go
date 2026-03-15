@@ -127,9 +127,8 @@ func TestEmbedMany_PropagatesError(t *testing.T) {
 	}
 }
 
-// TestEmbedMany_SearchInputs simulates the kind of inputs second-brain-api
-// sends when searching messages or documents (short query strings and longer
-// document chunks).
+// TestEmbedMany_SearchInputs simulates typical search and document embedding
+// inputs (short query strings and longer document chunks).
 func TestEmbedMany_SearchInputs(t *testing.T) {
 	searchInputs := []string{
 		"find all messages about project alpha",

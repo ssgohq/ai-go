@@ -55,11 +55,12 @@ type ContentPart struct {
 
 // Request is the engine-internal model request.
 type Request struct {
-	System   string
-	Messages []Message
-	Tools    []ToolDefinition
-	Output   *OutputSchema
-	Settings CallSettings
+	System          string
+	Messages        []Message
+	Tools           []ToolDefinition
+	Output          *OutputSchema
+	Settings        CallSettings
+	ProviderOptions map[string]any // provider-specific options keyed by provider name
 }
 
 // OutputSchema describes the desired JSON structure for a structured output call.
