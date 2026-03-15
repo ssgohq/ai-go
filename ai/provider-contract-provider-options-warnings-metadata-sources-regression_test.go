@@ -78,8 +78,8 @@ func TestProviderContract_WarningsPassthrough(t *testing.T) {
 		events: []ai.StreamEvent{
 			{Type: ai.StreamEventTextDelta, TextDelta: "result"},
 			{
-				Type:         ai.StreamEventFinish,
-				FinishReason: ai.FinishReasonStop,
+				Type:            ai.StreamEventFinish,
+				FinishReason:    ai.FinishReasonStop,
 				RawFinishReason: "stop",
 				Warnings: []ai.Warning{
 					{Type: "unsupported-setting", Setting: "topP", Message: "topP is not supported by this model"},

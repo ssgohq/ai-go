@@ -59,7 +59,7 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 		return nil, fmt.Errorf("openai: encode request: %w", err)
 	}
 
-	resp, err := m.doRequest(ctx, apiReq)
+	resp, err := m.doRequest(ctx, apiReq) //nolint:bodyclose // body closed by decodeResponsesSSEStream
 	if err != nil {
 		return nil, err
 	}

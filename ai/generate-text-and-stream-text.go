@@ -40,57 +40,16 @@ func GenerateText(ctx context.Context, req GenerateTextRequest) (*GenerateTextRe
 			}
 
 		case engine.StepEventToolResult:
-			if ev.ToolResult != nil {
-				tr := ToolResult{
-					ID:     ev.ToolResult.ID,
-					Name:   ev.ToolResult.Name,
-					Args:   ev.ToolResult.Args,
-					Output: ev.ToolResult.Output,
-				}
-				result.ToolResults = append(result.ToolResults, tr)
-				if currentStep != nil {
-					currentStep.ToolResults = append(currentStep.ToolResults, tr)
-				}
-			}
+			currentStep = handleToolResult(ev, result, currentStep)
 
 		case engine.StepEventUsage:
-			if ev.Usage != nil {
-				result.TotalUsage.PromptTokens += ev.Usage.PromptTokens
-				result.TotalUsage.CompletionTokens += ev.Usage.CompletionTokens
-				result.TotalUsage.TotalTokens += ev.Usage.TotalTokens
-				if currentStep != nil {
-					currentStep.Usage = Usage(*ev.Usage)
-				}
-			}
+			handleUsage(ev, result, currentStep)
 
 		case engine.StepEventSource:
-			if ev.Source != nil {
-				src := Source{
-					SourceType:       ev.Source.SourceType,
-					ID:               ev.Source.ID,
-					URL:              ev.Source.URL,
-					Title:            ev.Source.Title,
-					ProviderMetadata: ev.Source.ProviderMetadata,
-				}
-				result.Sources = append(result.Sources, src)
-				if currentStep != nil {
-					currentStep.Sources = append(currentStep.Sources, src)
-				}
-			}
+			handleSource(ev, result, currentStep)
 
 		case engine.StepEventStepEnd:
-			if currentStep != nil {
-				currentStep.FinishReason = FinishReason(ev.FinishReason)
-				currentStep.RawFinishReason = ev.RawFinishReason
-				currentStep.ProviderMetadata = ev.ProviderMetadata
-				currentStep.Warnings = fromEngineWarnings(ev.Warnings)
-				result.Steps = append(result.Steps, *currentStep)
-				result.FinishReason = FinishReason(ev.FinishReason)
-				result.RawFinishReason = ev.RawFinishReason
-				result.ProviderMetadata = ev.ProviderMetadata
-				result.Warnings = append(result.Warnings, currentStep.Warnings...)
-				currentStep = nil
-			}
+			currentStep = handleStepEnd(ev, result, currentStep)
 
 		case engine.StepEventStructuredOutput:
 			result.StructuredOutput = ev.StructuredOutput
@@ -101,6 +60,68 @@ func GenerateText(ctx context.Context, req GenerateTextRequest) (*GenerateTextRe
 	}
 
 	return result, nil
+}
+
+func handleToolResult(ev engine.StepEvent, result *GenerateTextResult, step *StepOutput) *StepOutput {
+	if ev.ToolResult == nil {
+		return step
+	}
+	tr := ToolResult{
+		ID:     ev.ToolResult.ID,
+		Name:   ev.ToolResult.Name,
+		Args:   ev.ToolResult.Args,
+		Output: ev.ToolResult.Output,
+	}
+	result.ToolResults = append(result.ToolResults, tr)
+	if step != nil {
+		step.ToolResults = append(step.ToolResults, tr)
+	}
+	return step
+}
+
+func handleUsage(ev engine.StepEvent, result *GenerateTextResult, step *StepOutput) {
+	if ev.Usage == nil {
+		return
+	}
+	result.TotalUsage.PromptTokens += ev.Usage.PromptTokens
+	result.TotalUsage.CompletionTokens += ev.Usage.CompletionTokens
+	result.TotalUsage.TotalTokens += ev.Usage.TotalTokens
+	if step != nil {
+		step.Usage = Usage(*ev.Usage)
+	}
+}
+
+func handleSource(ev engine.StepEvent, result *GenerateTextResult, step *StepOutput) {
+	if ev.Source == nil {
+		return
+	}
+	src := Source{
+		SourceType:       ev.Source.SourceType,
+		ID:               ev.Source.ID,
+		URL:              ev.Source.URL,
+		Title:            ev.Source.Title,
+		ProviderMetadata: ev.Source.ProviderMetadata,
+	}
+	result.Sources = append(result.Sources, src)
+	if step != nil {
+		step.Sources = append(step.Sources, src)
+	}
+}
+
+func handleStepEnd(ev engine.StepEvent, result *GenerateTextResult, step *StepOutput) *StepOutput {
+	if step == nil {
+		return nil
+	}
+	step.FinishReason = FinishReason(ev.FinishReason)
+	step.RawFinishReason = ev.RawFinishReason
+	step.ProviderMetadata = ev.ProviderMetadata
+	step.Warnings = fromEngineWarnings(ev.Warnings)
+	result.Steps = append(result.Steps, *step)
+	result.FinishReason = FinishReason(ev.FinishReason)
+	result.RawFinishReason = ev.RawFinishReason
+	result.ProviderMetadata = ev.ProviderMetadata
+	result.Warnings = append(result.Warnings, step.Warnings...)
+	return nil
 }
 
 // StreamText runs the tool loop and returns a channel of engine.StepEvents for

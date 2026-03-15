@@ -9,20 +9,20 @@ import (
 
 // responsesRequest is the JSON body sent to the OpenAI Responses API POST /v1/responses.
 type responsesRequest struct {
-	Model           string           `json:"model"`
-	Input           []inputItem      `json:"input"`
-	Stream          bool             `json:"stream,omitempty"`
-	MaxOutputTokens int              `json:"max_output_tokens,omitempty"`
-	Temperature     *float32         `json:"temperature,omitempty"`
-	TopP            *float32         `json:"top_p,omitempty"`
-	PreviousResponseID string        `json:"previous_response_id,omitempty"`
-	Reasoning       *reasoningConfig `json:"reasoning,omitempty"`
-	Tools           []responsesTool  `json:"tools,omitempty"`
-	Text            *textConfig      `json:"text,omitempty"`
-	Store           *bool            `json:"store,omitempty"`
-	User            string           `json:"user,omitempty"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
-	Include         []string         `json:"include,omitempty"`
+	Model              string            `json:"model"`
+	Input              []inputItem       `json:"input"`
+	Stream             bool              `json:"stream,omitempty"`
+	MaxOutputTokens    int               `json:"max_output_tokens,omitempty"`
+	Temperature        *float32          `json:"temperature,omitempty"`
+	TopP               *float32          `json:"top_p,omitempty"`
+	PreviousResponseID string            `json:"previous_response_id,omitempty"`
+	Reasoning          *reasoningConfig  `json:"reasoning,omitempty"`
+	Tools              []responsesTool   `json:"tools,omitempty"`
+	Text               *textConfig       `json:"text,omitempty"`
+	Store              *bool             `json:"store,omitempty"`
+	User               string            `json:"user,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	Include            []string          `json:"include,omitempty"`
 }
 
 type reasoningConfig struct {
@@ -48,14 +48,14 @@ type jsonSchemaRef struct {
 // inputItem is a union type for all Responses API input items.
 type inputItem struct {
 	// Role-based messages.
-	Role    string        `json:"role,omitempty"`
-	Content []inputPart   `json:"content,omitempty"`
+	Role    string      `json:"role,omitempty"`
+	Content []inputPart `json:"content,omitempty"`
 
 	// Function call (assistant tool use).
-	Type       string `json:"type,omitempty"`
-	CallID     string `json:"call_id,omitempty"`
-	Name       string `json:"name,omitempty"`
-	Arguments  string `json:"arguments,omitempty"`
+	Type      string `json:"type,omitempty"`
+	CallID    string `json:"call_id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 
 	// Function call output (tool result).
 	Output string `json:"output,omitempty"`

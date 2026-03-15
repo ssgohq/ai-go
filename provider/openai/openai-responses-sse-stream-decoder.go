@@ -62,6 +62,19 @@ type responsesChunk struct {
 	} `json:"error"`
 }
 
+// streamState holds mutable state accumulated during SSE stream decoding.
+type streamState struct {
+	responseID    string
+	callsByItemID map[string]*pendingCall
+	callOrder     []string
+}
+
+type pendingCall struct {
+	id   string
+	name string
+	args strings.Builder
+}
+
 // decodeResponsesSSEStream reads OpenAI Responses API SSE lines and emits
 // normalized ai.StreamEvents onto ch. Closes ch when done or on error.
 // encodingWarnings are merged onto the finish event so callers see them in the
@@ -73,17 +86,7 @@ func decodeResponsesSSEStream(ctx context.Context, body io.ReadCloser, ch chan<-
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-	// Track active function calls for accumulating argument deltas.
-	type pendingCall struct {
-		id   string
-		name string
-		args strings.Builder
-	}
-	callsByItemID := make(map[string]*pendingCall)
-	var callOrder []string // item_id order for index assignment
-
-	// Track last response ID for provider metadata.
-	var responseID string
+	state := &streamState{callsByItemID: make(map[string]*pendingCall)}
 
 	for scanner.Scan() {
 		select {
@@ -94,9 +97,6 @@ func decodeResponsesSSEStream(ctx context.Context, body io.ReadCloser, ch chan<-
 		}
 
 		line := scanner.Text()
-
-		// SSE format: lines beginning with "data: " carry JSON payloads.
-		// Lines beginning with "event: " carry event type names (ignored; we use .type inside JSON).
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -114,119 +114,8 @@ func decodeResponsesSSEStream(ctx context.Context, body io.ReadCloser, ch chan<-
 			return
 		}
 
-		switch chunk.Type {
-		case "response.created":
-			if chunk.Response != nil {
-				responseID = chunk.Response.ID
-			}
-
-		case "response.completed":
-			if chunk.Response != nil {
-				if chunk.Response.ID != "" {
-					responseID = chunk.Response.ID
-				}
-				var usage *ai.Usage
-				if u := chunk.Response.Usage; u != nil {
-					usage = &ai.Usage{
-						PromptTokens:     u.InputTokens,
-						CompletionTokens: u.OutputTokens,
-						TotalTokens:      u.TotalTokens,
-					}
-				}
-				providerMeta := map[string]any{
-					"openai": map[string]any{
-						"responseId": responseID,
-					},
-				}
-				if usage != nil {
-					ch <- ai.StreamEvent{Type: ai.StreamEventUsage, Usage: usage}
-				}
-				ch <- ai.StreamEvent{
-					Type:             ai.StreamEventFinish,
-					FinishReason:     mapResponsesFinishReason(chunk.Response.Status, len(callsByItemID) > 0),
-					RawFinishReason:  chunk.Response.Status,
-					ProviderMetadata: providerMeta,
-					Warnings:         encodingWarnings,
-				}
-			}
-
-		case "response.failed", "response.cancelled", "response.incomplete":
-			status := chunk.Type
-			ch <- ai.StreamEvent{
-				Type:            ai.StreamEventFinish,
-				FinishReason:    mapResponsesFinishReason(status, false),
-				RawFinishReason: status,
-			}
+		if done := dispatchChunk(chunk, state, ch, encodingWarnings); done {
 			return
-
-		case "error":
-			if chunk.Error != nil {
-				ch <- ai.StreamEvent{
-					Type:  ai.StreamEventError,
-					Error: fmt.Errorf("openai: %s: %s", chunk.Error.Code, chunk.Error.Message),
-				}
-			}
-			return
-
-		case "response.output_text.delta":
-			if chunk.Delta != "" {
-				ch <- ai.StreamEvent{Type: ai.StreamEventTextDelta, TextDelta: chunk.Delta}
-			}
-
-		case "response.reasoning_summary_text.delta":
-			if chunk.Delta != "" {
-				ch <- ai.StreamEvent{Type: ai.StreamEventReasoningDelta, TextDelta: chunk.Delta}
-			}
-
-		case "response.output_item.added":
-			if chunk.Item == nil {
-				continue
-			}
-			switch chunk.Item.Type {
-			case "function_call":
-				itemID := chunk.Item.ID
-				pc := &pendingCall{id: chunk.Item.CallID, name: chunk.Item.Name}
-				callsByItemID[itemID] = pc
-				callOrder = append(callOrder, itemID)
-				idx := len(callOrder) - 1
-				ch <- ai.StreamEvent{
-					Type:          ai.StreamEventToolCallDelta,
-					ToolCallIndex: idx,
-					ToolCallID:    chunk.Item.CallID,
-					ToolCallName:  chunk.Item.Name,
-				}
-			}
-
-		case "response.function_call_arguments.delta":
-			if chunk.Delta == "" || chunk.ItemID == "" {
-				continue
-			}
-			pc, ok := callsByItemID[chunk.ItemID]
-			if !ok {
-				continue
-			}
-			pc.args.WriteString(chunk.Delta)
-			idx := indexOfItemID(callOrder, chunk.ItemID)
-			ch <- ai.StreamEvent{
-				Type:              ai.StreamEventToolCallDelta,
-				ToolCallIndex:     idx,
-				ToolCallID:        pc.id,
-				ToolCallName:      pc.name,
-				ToolCallArgsDelta: chunk.Delta,
-			}
-
-		case "response.web_search_call.sources":
-			for _, s := range chunk.Sources {
-				ch <- ai.StreamEvent{
-					Type: ai.StreamEventSource,
-					Source: &ai.Source{
-						SourceType: "url",
-						ID:         s.ID,
-						URL:        s.URL,
-						Title:      s.Title,
-					},
-				}
-			}
 		}
 	}
 
@@ -235,6 +124,119 @@ func decodeResponsesSSEStream(ctx context.Context, body io.ReadCloser, ch chan<-
 			Type:  ai.StreamEventError,
 			Error: fmt.Errorf("openai: read stream: %w", err),
 		}
+	}
+}
+
+// dispatchChunk routes a single SSE chunk to the appropriate handler.
+// Returns true if the stream should terminate.
+func dispatchChunk(chunk responsesChunk, state *streamState, ch chan<- ai.StreamEvent, encodingWarnings []ai.Warning) bool {
+	switch chunk.Type {
+	case "response.created":
+		if chunk.Response != nil {
+			state.responseID = chunk.Response.ID
+		}
+
+	case "response.completed":
+		handleResponseCompleted(chunk, state, ch, encodingWarnings)
+
+	case "response.failed", "response.cancelled", "response.incomplete":
+		ch <- ai.StreamEvent{
+			Type:            ai.StreamEventFinish,
+			FinishReason:    mapResponsesFinishReason(chunk.Type, false),
+			RawFinishReason: chunk.Type,
+		}
+		return true
+
+	case "error":
+		if chunk.Error != nil {
+			ch <- ai.StreamEvent{
+				Type:  ai.StreamEventError,
+				Error: fmt.Errorf("openai: %s: %s", chunk.Error.Code, chunk.Error.Message),
+			}
+		}
+		return true
+
+	case "response.output_text.delta":
+		if chunk.Delta != "" {
+			ch <- ai.StreamEvent{Type: ai.StreamEventTextDelta, TextDelta: chunk.Delta}
+		}
+
+	case "response.reasoning_summary_text.delta":
+		if chunk.Delta != "" {
+			ch <- ai.StreamEvent{Type: ai.StreamEventReasoningDelta, TextDelta: chunk.Delta}
+		}
+
+	case "response.output_item.added":
+		handleOutputItemAdded(chunk, state, ch)
+
+	case "response.function_call_arguments.delta":
+		handleFunctionCallArgsDelta(chunk, state, ch)
+
+	case "response.web_search_call.sources":
+		for _, s := range chunk.Sources {
+			ch <- ai.StreamEvent{
+				Type:   ai.StreamEventSource,
+				Source: &ai.Source{SourceType: "url", ID: s.ID, URL: s.URL, Title: s.Title},
+			}
+		}
+	}
+	return false
+}
+
+func handleResponseCompleted(chunk responsesChunk, state *streamState, ch chan<- ai.StreamEvent, encodingWarnings []ai.Warning) {
+	if chunk.Response == nil {
+		return
+	}
+	if chunk.Response.ID != "" {
+		state.responseID = chunk.Response.ID
+	}
+	if u := chunk.Response.Usage; u != nil {
+		ch <- ai.StreamEvent{Type: ai.StreamEventUsage, Usage: &ai.Usage{
+			PromptTokens:     u.InputTokens,
+			CompletionTokens: u.OutputTokens,
+			TotalTokens:      u.TotalTokens,
+		}}
+	}
+	ch <- ai.StreamEvent{
+		Type:             ai.StreamEventFinish,
+		FinishReason:     mapResponsesFinishReason(chunk.Response.Status, len(state.callsByItemID) > 0),
+		RawFinishReason:  chunk.Response.Status,
+		ProviderMetadata: map[string]any{"openai": map[string]any{"responseId": state.responseID}},
+		Warnings:         encodingWarnings,
+	}
+}
+
+func handleOutputItemAdded(chunk responsesChunk, state *streamState, ch chan<- ai.StreamEvent) {
+	if chunk.Item == nil || chunk.Item.Type != "function_call" {
+		return
+	}
+	itemID := chunk.Item.ID
+	pc := &pendingCall{id: chunk.Item.CallID, name: chunk.Item.Name}
+	state.callsByItemID[itemID] = pc
+	state.callOrder = append(state.callOrder, itemID)
+	ch <- ai.StreamEvent{
+		Type:          ai.StreamEventToolCallDelta,
+		ToolCallIndex: len(state.callOrder) - 1,
+		ToolCallID:    chunk.Item.CallID,
+		ToolCallName:  chunk.Item.Name,
+	}
+}
+
+func handleFunctionCallArgsDelta(chunk responsesChunk, state *streamState, ch chan<- ai.StreamEvent) {
+	if chunk.Delta == "" || chunk.ItemID == "" {
+		return
+	}
+	pc, ok := state.callsByItemID[chunk.ItemID]
+	if !ok {
+		return
+	}
+	pc.args.WriteString(chunk.Delta)
+	ch <- ai.StreamEvent{
+		Type:              ai.StreamEventToolCallDelta,
+		ToolCallIndex:     indexOfItemID(state.callOrder, chunk.ItemID),
+		ToolCallID:        pc.id,
+		ToolCallName:      pc.name,
+		ToolCallArgsDelta: chunk.Delta,
 	}
 }
 

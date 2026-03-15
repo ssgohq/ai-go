@@ -65,10 +65,10 @@ type Source struct {
 // WriteSource emits a source chunk for a single web reference.
 func (wr *Writer) WriteSource(s Source) {
 	wr.writeSSE(map[string]any{
-		"type":   ChunkSource,
-		"id":     s.ID,
-		"url":    s.URL,
-		"title":  s.Title,
+		"type":  ChunkSource,
+		"id":    s.ID,
+		"url":   s.URL,
+		"title": s.Title,
 	})
 }
 
