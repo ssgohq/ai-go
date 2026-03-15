@@ -8,12 +8,12 @@ import "encoding/json"
 type StepEventType int
 
 const (
-	StepEventTextDelta        StepEventType = iota
+	StepEventTextDelta StepEventType = iota
 	StepEventReasoningDelta
-	StepEventToolCallStart   // first delta for a new tool call
-	StepEventToolCallDelta   // subsequent argument fragment
-	StepEventToolCallReady   // tool call complete, about to execute
-	StepEventToolResult      // tool execution result
+	StepEventToolCallStart // first delta for a new tool call
+	StepEventToolCallDelta // subsequent argument fragment
+	StepEventToolCallReady // tool call complete, about to execute
+	StepEventToolResult    // tool execution result
 	StepEventUsage
 	StepEventStepStart
 	StepEventStepEnd
@@ -85,7 +85,7 @@ type ToolResult struct {
 type StreamEventType int
 
 const (
-	StreamEventTextDelta       StreamEventType = iota
+	StreamEventTextDelta StreamEventType = iota
 	StreamEventReasoningDelta
 	StreamEventToolCallDelta
 	StreamEventUsage

@@ -32,17 +32,17 @@ func emitStructuredOutput(ctx context.Context, out chan<- StepEvent, params RunP
 		return
 	}
 
-	var content string
+	var b strings.Builder
 	for ev := range eventCh {
 		if ev.Type == StreamEventTextDelta {
-			content += ev.TextDelta
+			b.WriteString(ev.TextDelta)
 		}
 		if ev.Type == StreamEventError {
 			return
 		}
 	}
 
-	parsed := parseStructuredOutput(content)
+	parsed := parseStructuredOutput(b.String())
 	if parsed != nil {
 		out <- StepEvent{Type: StepEventStructuredOutput, StructuredOutput: parsed}
 	}

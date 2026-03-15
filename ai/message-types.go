@@ -17,10 +17,10 @@ const (
 type ContentPartType string
 
 const (
-	ContentPartTypeText     ContentPartType = "text"
-	ContentPartTypeImageURL ContentPartType = "image_url"
-	ContentPartTypeFile     ContentPartType = "file"
-	ContentPartTypeToolCall ContentPartType = "tool_call"
+	ContentPartTypeText       ContentPartType = "text"
+	ContentPartTypeImageURL   ContentPartType = "image_url"
+	ContentPartTypeFile       ContentPartType = "file"
+	ContentPartTypeToolCall   ContentPartType = "tool_call"
 	ContentPartTypeToolResult ContentPartType = "tool_result"
 )
 

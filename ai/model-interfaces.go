@@ -36,7 +36,7 @@ type LanguageModelRequest struct {
 type StreamEventType int
 
 const (
-	StreamEventTextDelta       StreamEventType = iota
+	StreamEventTextDelta StreamEventType = iota
 	StreamEventReasoningDelta
 	StreamEventToolCallDelta
 	StreamEventUsage
@@ -52,11 +52,11 @@ type StreamEvent struct {
 	TextDelta string
 
 	// Tool call fields are set for StreamEventToolCallDelta.
-	ToolCallIndex    int
-	ToolCallID       string
-	ToolCallName     string
+	ToolCallIndex     int
+	ToolCallID        string
+	ToolCallName      string
 	ToolCallArgsDelta string
-	ThoughtSignature string
+	ThoughtSignature  string
 
 	// Usage is set for StreamEventUsage.
 	Usage *Usage

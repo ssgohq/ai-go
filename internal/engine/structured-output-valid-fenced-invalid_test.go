@@ -5,34 +5,9 @@ import (
 	"testing"
 )
 
-// modelReturningJSON simulates a model that emits a structured JSON response.
-type modelReturningJSON struct {
-	response string
-}
-
-func (m *modelReturningJSON) ModelID() string { return "mock-structured" }
-
-func (m *modelReturningJSON) Stream(_ context.Context, _ Request) (<-chan StreamEvent, error) {
-	ch := make(chan StreamEvent, 4)
-	go func() {
-		defer close(ch)
-		ch <- StreamEvent{Type: StreamEventTextDelta, TextDelta: m.response}
-		ch <- StreamEvent{Type: StreamEventFinish, FinishReason: FinishReasonStop}
-	}()
-	return ch, nil
-}
-
 func runStructuredOutputEngine(t *testing.T, modelResponse string) []StepEvent {
 	t.Helper()
 
-	// Two model calls: first returns no tool calls (triggers structured output call),
-	// second returns the JSON response.
-	step1Model := &mockModel{calls: [][]StreamEvent{
-		// Step 1: plain text, no tools → triggers structured output call
-		{{Type: StreamEventTextDelta, TextDelta: "done"}, {Type: StreamEventFinish, FinishReason: FinishReasonStop}},
-	}}
-
-	// We need to intercept the structured output call. Use a two-call mockModel.
 	model := &mockModel{calls: [][]StreamEvent{
 		// Step 1: plain finish
 		{
@@ -45,7 +20,6 @@ func runStructuredOutputEngine(t *testing.T, modelResponse string) []StepEvent {
 			{Type: StreamEventFinish, FinishReason: FinishReasonStop},
 		},
 	}}
-	_ = step1Model
 
 	ch := Run(context.Background(), RunParams{
 		Model: model,

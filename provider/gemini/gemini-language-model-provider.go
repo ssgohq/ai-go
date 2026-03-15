@@ -76,7 +76,10 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("gemini: unexpected status %d (failed to read body: %w)", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("gemini: unexpected status %d: %s", resp.StatusCode, string(respBody))
 	}
 

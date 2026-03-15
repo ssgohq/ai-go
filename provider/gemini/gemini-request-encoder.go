@@ -1,7 +1,6 @@
 package gemini
 
 import (
-	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -190,7 +189,3 @@ func encodeOutputSchema(o *ai.OutputSchema) *responseFormat {
 	}
 }
 
-// dataURIFromBytes builds a base64 data URI.
-func dataURIFromBytes(data []byte, mimeType string) string {
-	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data))
-}
