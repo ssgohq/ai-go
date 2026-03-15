@@ -314,6 +314,7 @@ func toEngineContentParts(parts []ContentPart) []engine.ContentPart {
 		if p.ToolCallArgs != nil {
 			ep.ToolCallArgs = string(p.ToolCallArgs)
 		}
+		ep.ThoughtSignature = p.ThoughtSignature
 		out[i] = ep
 	}
 	return out
@@ -364,6 +365,7 @@ func fromEngineContentParts(parts []engine.ContentPart) []ContentPart {
 		if p.ToolCallArgs != "" {
 			cp.ToolCallArgs = json.RawMessage(p.ToolCallArgs)
 		}
+		cp.ThoughtSignature = p.ThoughtSignature
 		out[i] = cp
 	}
 	return out
