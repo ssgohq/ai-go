@@ -47,4 +47,3 @@ func (m *LanguageModel) ModelID() string { return m.core.ModelID() }
 func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest) (<-chan ai.StreamEvent, error) {
 	return m.core.Stream(ctx, req)
 }
-
