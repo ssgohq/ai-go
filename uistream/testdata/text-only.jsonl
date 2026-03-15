@@ -1,0 +1,17 @@
+data: {"type":"start","messageId":"msg-text-001"}
+
+data: {"type":"start-step"}
+
+data: {"type":"text-start","id":"text_1"}
+
+data: {"type":"text-delta","id":"text_1","delta":"Hello! "}
+
+data: {"type":"text-delta","id":"text_1","delta":"How can I help you today?"}
+
+data: {"type":"text-end","id":"text_1"}
+
+data: {"type":"finish-step"}
+
+data: {"type":"finish"}
+
+data: [DONE]

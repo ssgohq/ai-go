@@ -1,0 +1,29 @@
+data: {"type":"start","messageId":"msg-reason-001"}
+
+data: {"type":"start-step"}
+
+data: {"type":"reasoning-start","id":"text_1"}
+
+data: {"type":"reasoning-delta","id":"text_1","delta":"Let me think about this carefully. "}
+
+data: {"type":"reasoning-delta","id":"text_1","delta":"The user is asking about AI trends in 2025."}
+
+data: {"type":"reasoning-end","id":"text_1"}
+
+data: {"type":"text-start","id":"text_1"}
+
+data: {"type":"text-delta","id":"text_1","delta":"In 2025, the key AI trends include "}
+
+data: {"type":"text-delta","id":"text_1","delta":"large multimodal models and agentic workflows."}
+
+data: {"type":"text-end","id":"text_1"}
+
+data: {"type":"finish-step"}
+
+data: {"type":"source","id":"src-1","url":"https://example.com/ai-trends-2025","title":"AI Trends 2025"}
+
+data: {"type":"sources","sources":[{"id":"src-1","url":"https://example.com/ai-trends-2025","title":"AI Trends 2025"},{"id":"src-2","url":"https://example.com/llm-survey","title":"LLM Survey 2025"}]}
+
+data: {"type":"finish"}
+
+data: [DONE]

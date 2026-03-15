@@ -1,0 +1,11 @@
+data: {"type":"start","messageId":"msg-err-001"}
+
+data: {"type":"start-step"}
+
+data: {"type":"text-start","id":"text_1"}
+
+data: {"type":"text-delta","id":"text_1","delta":"Let me help you with that. "}
+
+data: {"type":"text-delta","id":"text_1","delta":"First, I need to look up some inform"}
+
+data: {"type":"error","errorText":"stream error: connection reset by peer"}

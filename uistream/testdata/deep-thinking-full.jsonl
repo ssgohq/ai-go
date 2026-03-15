@@ -1,0 +1,51 @@
+data: {"type":"start","messageId":"msg-deep-001"}
+
+data: {"type":"data-plan","data":{"content":"Research recent AI developments, analyze findings, and produce a summary."}}
+
+data: {"type":"data-steps","data":{"steps":["Search for recent AI news","Analyze the results","Write a comprehensive summary"]}}
+
+data: {"type":"start-step"}
+
+data: {"type":"reasoning-start","id":"text_1"}
+
+data: {"type":"reasoning-delta","id":"text_1","delta":"I need to find the latest AI news. "}
+
+data: {"type":"reasoning-delta","id":"text_1","delta":"Let me use the web search tool."}
+
+data: {"type":"reasoning-end","id":"text_1"}
+
+data: {"type":"tool-input-start","toolCallId":"ws-1","toolName":"web_search"}
+
+data: {"type":"tool-input-delta","toolCallId":"ws-1","inputTextDelta":"{\"query\":\"latest AI developments 2025\"}"}
+
+data: {"type":"tool-input-available","toolCallId":"ws-1","toolName":"web_search","input":{"query":"latest AI developments 2025"}}
+
+data: {"type":"tool-output-available","toolCallId":"ws-1","output":{"results":["GPT-5 released by OpenAI","Gemini 2.0 Ultra launched","Claude 4 available"]}}
+
+data: {"type":"finish-step"}
+
+data: {"type":"start-step"}
+
+data: {"type":"text-start","id":"text_2"}
+
+data: {"type":"text-delta","id":"text_2","delta":"The AI landscape in 2025 has seen remarkable progress. "}
+
+data: {"type":"text-delta","id":"text_2","delta":"OpenAI released GPT-5, Google launched Gemini 2.0 Ultra, "}
+
+data: {"type":"text-delta","id":"text_2","delta":"and Anthropic made Claude 4 available to users."}
+
+data: {"type":"text-end","id":"text_2"}
+
+data: {"type":"finish-step"}
+
+data: {"type":"source","id":"s1","url":"https://openai.com/gpt5","title":"GPT-5 Announcement"}
+
+data: {"type":"sources","sources":[{"id":"s1","url":"https://openai.com/gpt5","title":"GPT-5 Announcement"},{"id":"s2","url":"https://deepmind.google/gemini","title":"Gemini 2.0 Ultra"}]}
+
+data: {"type":"data-suggested-questions","data":{"questions":["How does GPT-5 compare to Gemini 2.0?","What are the main use cases for Claude 4?","Which model is best for coding tasks?"]}}
+
+data: {"type":"data-usage","data":{"promptTokens":250,"completionTokens":89,"totalTokens":339}}
+
+data: {"type":"finish"}
+
+data: [DONE]
