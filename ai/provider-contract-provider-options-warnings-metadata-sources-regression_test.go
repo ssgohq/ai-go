@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ssgohq/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/ai"
 )
 
 // stubLanguageModel is a minimal ai.LanguageModel for contract regression tests.

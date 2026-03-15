@@ -5,7 +5,7 @@ package openaichat
 import (
 	"strings"
 
-	"github.com/ssgohq/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/ai"
 )
 
 // MapFinishReason converts a raw chat-completions finish_reason string into an ai.FinishReason.

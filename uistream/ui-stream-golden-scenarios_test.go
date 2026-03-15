@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ssgohq/ai-go/internal/engine"
+	"github.com/open-ai-sdk/ai-go/internal/engine"
 )
 
 func makeEvents(evs ...engine.StepEvent) <-chan engine.StepEvent {

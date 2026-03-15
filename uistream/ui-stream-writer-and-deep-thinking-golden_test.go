@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ssgohq/ai-go/internal/engine"
+	"github.com/open-ai-sdk/ai-go/internal/engine"
 )
 
 // TestWriter_WriteData verifies that WriteData emits a valid data-* chunk.

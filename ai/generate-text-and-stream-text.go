@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/ssgohq/ai-go/internal/engine"
+	"github.com/open-ai-sdk/ai-go/internal/engine"
 )
 
 // GenerateText runs a full tool loop and returns the aggregated result.

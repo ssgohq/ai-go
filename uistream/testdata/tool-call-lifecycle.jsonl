@@ -1,0 +1,35 @@
+data: {"type":"start","messageId":"msg-tool-001"}
+
+data: {"type":"start-step"}
+
+data: {"type":"tool-input-start","toolCallId":"tc-abc","toolName":"search_documents"}
+
+data: {"type":"tool-input-delta","toolCallId":"tc-abc","inputTextDelta":"{\"query\":\"Go concurrency"}
+
+data: {"type":"tool-input-delta","toolCallId":"tc-abc","inputTextDelta":" patterns\"}"}
+
+data: {"type":"tool-input-available","toolCallId":"tc-abc","toolName":"search_documents","input":{"query":"Go concurrency patterns"}}
+
+data: {"type":"tool-output-available","toolCallId":"tc-abc","output":{"results":[{"documentId":"doc-1","documentTitle":"Concurrency in Go"},{"documentId":"doc-2","documentTitle":"Go Patterns"}]}}
+
+data: {"type":"data-document-references","data":[{"id":"doc-1","title":"Concurrency in Go"},{"id":"doc-2","title":"Go Patterns"}]}
+
+data: {"type":"finish-step"}
+
+data: {"type":"start-step"}
+
+data: {"type":"text-start","id":"text_2"}
+
+data: {"type":"text-delta","id":"text_2","delta":"Based on the documents found, "}
+
+data: {"type":"text-delta","id":"text_2","delta":"Go concurrency uses goroutines and channels."}
+
+data: {"type":"text-end","id":"text_2"}
+
+data: {"type":"finish-step"}
+
+data: {"type":"data-usage","data":{"promptTokens":120,"completionTokens":45,"totalTokens":165}}
+
+data: {"type":"finish"}
+
+data: [DONE]

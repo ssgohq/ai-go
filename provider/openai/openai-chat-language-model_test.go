@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ssgohq/ai-go/ai"
-	"github.com/ssgohq/ai-go/provider/openai"
+	"github.com/open-ai-sdk/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/provider/openai"
 )
 
 // chatSSE builds a minimal valid SSE stream for chat completions.

@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ssgohq/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/ai"
 )
 
 const defaultBaseURL = "https://api.openai.com/v1"

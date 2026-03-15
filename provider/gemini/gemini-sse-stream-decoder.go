@@ -4,8 +4,8 @@ import (
 	"context"
 	"io"
 
-	"github.com/ssgohq/ai-go/ai"
-	"github.com/ssgohq/ai-go/provider/internal/openaichat"
+	"github.com/open-ai-sdk/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/provider/internal/openaichat"
 )
 
 // decodeSSEStream reads SSE lines from body and emits normalized ai.StreamEvents onto ch.

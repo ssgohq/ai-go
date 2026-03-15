@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/ssgohq/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/ai"
 )
 
 // StreamChunk mirrors the OpenAI chat completions SSE chunk structure.

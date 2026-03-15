@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ssgohq/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/ai"
 )
 
 // ModelConfig holds all configuration for the shared chat completions LanguageModel.

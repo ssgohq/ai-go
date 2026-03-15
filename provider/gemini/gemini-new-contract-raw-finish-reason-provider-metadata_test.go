@@ -3,7 +3,7 @@ package gemini
 import (
 	"testing"
 
-	"github.com/ssgohq/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/ai"
 )
 
 // TestGeminiContract_RawFinishReasonPopulated verifies that the Gemini SSE decoder
