@@ -23,14 +23,23 @@ type EmbeddingModel interface {
 	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
 }
 
-// LanguageModelRequest is the normalized input to a LanguageModel.
+// LanguageModelRequest is the normalized input passed to LanguageModel.Stream.
+// Providers should read ToolChoice to determine the tool selection policy.
 type LanguageModelRequest struct {
-	System          string
-	Messages        []Message
-	Tools           []ToolDefinition
-	Output          *OutputSchema
-	Settings        CallSettings
-	ProviderOptions map[string]any // provider-specific options keyed by provider name
+	// System is the system prompt, already resolved from GenerateTextRequest.System.
+	System string
+	// Messages is the full conversation history for this step.
+	Messages []Message
+	// Tools is the list of callable function tools available for this step.
+	Tools []ToolDefinition
+	// ToolChoice controls which tool the model must call. Nil means auto.
+	ToolChoice *ToolChoice
+	// Output optionally constrains the output to a JSON schema or mode.
+	Output *OutputSchema
+	// Settings holds per-request model parameters.
+	Settings CallSettings
+	// ProviderOptions carries provider-specific options keyed by provider name.
+	ProviderOptions map[string]any
 }
 
 // Warning is a non-fatal advisory from the provider or SDK layer.

@@ -16,9 +16,11 @@ type ChatRequest struct {
 	Temperature    float32          `json:"temperature,omitempty"`
 	MaxTokens      int              `json:"max_tokens,omitempty"`
 	Tools          []map[string]any `json:"tools,omitempty"`
-	ToolChoice     string           `json:"tool_choice,omitempty"`
+	ToolChoice     any              `json:"tool_choice,omitempty"`
 	ResponseFormat *ResponseFormat  `json:"response_format,omitempty"`
 	Stop           []string         `json:"stop,omitempty"`
+	Seed           *int             `json:"seed,omitempty"`
+	TopP           float32          `json:"top_p,omitempty"`
 }
 
 // ResponseFormat encodes the response_format field.
@@ -71,6 +73,12 @@ func EncodeRequest(
 	if req.Settings.Temperature != nil {
 		cr.Temperature = *req.Settings.Temperature
 	}
+	if req.Settings.TopP != nil {
+		cr.TopP = *req.Settings.TopP
+	}
+	if req.Settings.Seed != nil {
+		cr.Seed = req.Settings.Seed
+	}
 
 	if len(req.Tools) > 0 {
 		toolDefs := make([]map[string]any, len(req.Tools))
@@ -80,7 +88,7 @@ func EncodeRequest(
 				"function": map[string]any{
 					"name":        t.Name,
 					"description": t.Description,
-					"parameters":  t.Parameters,
+					"parameters":  t.InputSchema,
 				},
 			}
 		}
@@ -88,7 +96,7 @@ func EncodeRequest(
 			toolDefs = params.SanitizeTools(toolDefs)
 		}
 		cr.Tools = toolDefs
-		cr.ToolChoice = "auto"
+		cr.ToolChoice = encodeToolChoice(req.ToolChoice)
 	}
 
 	if req.Output != nil && req.Output.Type != "text" {
@@ -165,6 +173,9 @@ func encodeContentMessage(m ai.Message) (map[string]any, error) {
 				},
 			}
 			toolCalls = append(toolCalls, call)
+		case ai.ContentPartTypeReasoning:
+			// Reasoning parts are provider-specific; most OpenAI-compatible APIs do not
+			// accept them as message content. Omit silently to maintain compatibility.
 		}
 	}
 
@@ -191,7 +202,35 @@ func encodeToolResultMessage(m ai.Message) (map[string]any, error) {
 	return map[string]any{"role": "tool", "content": ""}, nil
 }
 
+// encodeToolChoice converts an ai.ToolChoice to the OpenAI wire format.
+// nil / "auto" → "auto" (string), "none" → "none", "required" → "required",
+// "tool" → object {"type":"function","function":{"name":"..."}}.
+func encodeToolChoice(tc *ai.ToolChoice) any {
+	if tc == nil {
+		return "auto"
+	}
+	switch tc.Type {
+	case "none":
+		return "none"
+	case "required":
+		return "required"
+	case "tool":
+		return map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": tc.ToolName},
+		}
+	default:
+		return "auto"
+	}
+}
+
+// encodeOutputSchema converts an ai.OutputSchema to OpenAI response_format.
+// "json_object" → {type: "json_object"} (no schema).
+// "object" / "array" → {type: "json_schema", json_schema: {...}}.
 func encodeOutputSchema(o *ai.OutputSchema) *ResponseFormat {
+	if o.Type == "json_object" {
+		return &ResponseFormat{Type: "json_object"}
+	}
 	schema := o.Schema
 	if o.Type == "object" && schema != nil {
 		if _, ok := schema["type"]; !ok {

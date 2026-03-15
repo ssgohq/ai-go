@@ -2,6 +2,8 @@ package ai
 
 import "testing"
 
+// --- StopCondition helpers ---
+
 func TestStepCountIs(t *testing.T) {
 	cond := StepCountIs(3)
 
@@ -22,6 +24,52 @@ func TestNever(t *testing.T) {
 		if cond(step, &StepResult{}) {
 			t.Errorf("Never() should not stop at step %d", step)
 		}
+	}
+}
+
+func TestHasToolCall_Match(t *testing.T) {
+	cond := HasToolCall("web_search")
+	r := &StepResult{HasToolCalls: true, ToolNames: []string{"web_search", "other"}}
+	if !cond(1, r) {
+		t.Error("HasToolCall should return true when tool name matches")
+	}
+}
+
+func TestHasToolCall_NoMatch(t *testing.T) {
+	cond := HasToolCall("web_search")
+	r := &StepResult{HasToolCalls: true, ToolNames: []string{"calculator"}}
+	if cond(1, r) {
+		t.Error("HasToolCall should return false when tool name does not match")
+	}
+}
+
+func TestHasToolCall_EmptyNames(t *testing.T) {
+	cond := HasToolCall("web_search")
+	r := &StepResult{HasToolCalls: false, ToolNames: nil}
+	if cond(1, r) {
+		t.Error("HasToolCall should return false when no tool names")
+	}
+}
+
+// --- OutputSchema helpers ---
+
+func TestOutputText(t *testing.T) {
+	o := OutputText()
+	if o.Type != "text" {
+		t.Errorf("expected type text, got %s", o.Type)
+	}
+	if o.Schema != nil {
+		t.Error("expected schema to be nil for text output")
+	}
+}
+
+func TestOutputJSONObject(t *testing.T) {
+	o := OutputJSONObject()
+	if o.Type != "json_object" {
+		t.Errorf("expected type json_object, got %s", o.Type)
+	}
+	if o.Schema != nil {
+		t.Error("expected schema to be nil for json_object output")
 	}
 }
 
@@ -49,15 +97,5 @@ func TestOutputArray(t *testing.T) {
 	itemMap, ok := items.(map[string]any)
 	if !ok || itemMap["type"] != "string" {
 		t.Error("expected items to be string schema")
-	}
-}
-
-func TestOutputText(t *testing.T) {
-	o := OutputText()
-	if o.Type != "text" {
-		t.Errorf("expected type text, got %s", o.Type)
-	}
-	if o.Schema != nil {
-		t.Error("expected schema to be nil for text output")
 	}
 }

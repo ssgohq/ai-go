@@ -17,15 +17,26 @@ const (
 type ContentPartType string
 
 const (
-	ContentPartTypeText       ContentPartType = "text"
-	ContentPartTypeImageURL   ContentPartType = "image_url"
-	ContentPartTypeFile       ContentPartType = "file"
-	ContentPartTypeToolCall   ContentPartType = "tool_call"
+	// ContentPartTypeText is a plain-text part.
+	ContentPartTypeText ContentPartType = "text"
+	// ContentPartTypeImageURL is an image referenced by URL or data URI.
+	ContentPartTypeImageURL ContentPartType = "image_url"
+	// ContentPartTypeFile is a file referenced by URL or data URI.
+	ContentPartTypeFile ContentPartType = "file"
+	// ContentPartTypeToolCall is a model-issued tool call (assistant turn only).
+	ContentPartTypeToolCall ContentPartType = "tool_call"
+	// ContentPartTypeToolResult is the result of a tool execution (tool turn only).
 	ContentPartTypeToolResult ContentPartType = "tool_result"
+	// ContentPartTypeReasoning carries prior reasoning text for history replay
+	// (e.g. Claude extended thinking). Used in assistant messages when replaying
+	// multi-step conversations that included a reasoning block.
+	ContentPartTypeReasoning ContentPartType = "reasoning"
 )
 
-// ContentPart is a single part of a message (text, image, file, or tool call/result).
+// ContentPart is a single part of a message (text, image, file, tool call/result, or reasoning).
+// Only the fields matching the active Type are populated; all others are zero.
 type ContentPart struct {
+	// Type identifies which fields below are populated.
 	Type ContentPartType
 
 	// Text is set when Type == ContentPartTypeText.
@@ -34,19 +45,27 @@ type ContentPart struct {
 	// ImageURL is set when Type == ContentPartTypeImageURL (supports data: URLs).
 	ImageURL string
 
-	// FileURL is set when Type == ContentPartTypeFile.
-	FileURL  string
+	// FileURL is the URL or data URI when Type == ContentPartTypeFile.
+	FileURL string
+	// MimeType is the MIME type of the file when Type == ContentPartTypeFile.
 	MimeType string
 
-	// ToolCall is set when Type == ContentPartTypeToolCall.
-	ToolCallID   string
+	// ToolCallID is the unique ID for the tool call when Type == ContentPartTypeToolCall.
+	ToolCallID string
+	// ToolCallName is the tool function name when Type == ContentPartTypeToolCall.
 	ToolCallName string
+	// ToolCallArgs is the JSON-encoded arguments when Type == ContentPartTypeToolCall.
 	ToolCallArgs json.RawMessage
 
-	// ToolResult is set when Type == ContentPartTypeToolResult.
-	ToolResultID     string
-	ToolResultName   string
+	// ToolResultID matches the ToolCallID that this result answers (Type == ContentPartTypeToolResult).
+	ToolResultID string
+	// ToolResultName is the name of the tool that produced this result (Type == ContentPartTypeToolResult).
+	ToolResultName string
+	// ToolResultOutput is the string result from the tool execution (Type == ContentPartTypeToolResult).
 	ToolResultOutput string
+
+	// ReasoningText holds the reasoning / thinking text when Type == ContentPartTypeReasoning.
+	ReasoningText string
 }
 
 // TextPart constructs a text ContentPart.
@@ -62,6 +81,33 @@ func ImageURLPart(url string) ContentPart {
 // FilePart constructs a file ContentPart.
 func FilePart(url, mimeType string) ContentPart {
 	return ContentPart{Type: ContentPartTypeFile, FileURL: url, MimeType: mimeType}
+}
+
+// ReasoningPart constructs a reasoning ContentPart for history replay.
+// Use this when reconstructing assistant messages that included a reasoning block
+// (e.g. Claude extended thinking) so that the model can continue from prior reasoning.
+func ReasoningPart(reasoningText string) ContentPart {
+	return ContentPart{Type: ContentPartTypeReasoning, ReasoningText: reasoningText}
+}
+
+// ToolCallPart constructs a tool-call ContentPart for assistant messages.
+func ToolCallPart(id, name string, args json.RawMessage) ContentPart {
+	return ContentPart{
+		Type:         ContentPartTypeToolCall,
+		ToolCallID:   id,
+		ToolCallName: name,
+		ToolCallArgs: args,
+	}
+}
+
+// ToolResultPart constructs a tool-result ContentPart for tool messages.
+func ToolResultPart(id, name, output string) ContentPart {
+	return ContentPart{
+		Type:             ContentPartTypeToolResult,
+		ToolResultID:     id,
+		ToolResultName:   name,
+		ToolResultOutput: output,
+	}
 }
 
 // Message is a single turn in a conversation.
