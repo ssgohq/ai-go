@@ -13,13 +13,28 @@ type Chunk struct {
 	Data map[string]any
 }
 
+// ToolResult is a public-facing tool result notification emitted during streaming.
+// Callers that need to react to tool results (e.g. emit document references) receive
+// these via the ToolResultHook set on the Adapter.
+type ToolResult struct {
+	ToolCallID string
+	ToolName   string
+	ArgsJSON   string
+	Output     string
+}
+
+// ToolResultHook is called after a tool result is emitted to the stream.
+// wr is bound to the same io.Writer as the adapter so callers can emit additional chunks.
+type ToolResultHook func(wr *Writer, result ToolResult)
+
 // Adapter translates a channel of engine.StepEvents into UI message stream chunks.
 // It is transport-agnostic: callers can write to an http.ResponseWriter, a buffer, etc.
 //
 // For custom data-* chunks or source chunks between or after stream events,
 // obtain the Writer via adapter.Writer(w) and call WriteData / WriteSource directly.
 type Adapter struct {
-	msgID string
+	msgID          string
+	toolResultHook ToolResultHook
 
 	// per-step state
 	textBlockID      string
@@ -38,6 +53,14 @@ func NewAdapter(msgID string) *Adapter {
 		toolInputStarted: make(map[string]bool),
 		toolArgsAccum:    make(map[string]string),
 	}
+}
+
+// WithToolResultHook sets a hook called after each tool result is emitted.
+// Use this to emit custom side-channel data (e.g. document references) without
+// wrapping the internal event channel.
+func (a *Adapter) WithToolResultHook(hook ToolResultHook) *Adapter {
+	a.toolResultHook = hook
+	return a
 }
 
 // Writer returns a direct-write Writer bound to w for emitting custom chunks
@@ -179,6 +202,15 @@ func (a *Adapter) handleToolResult(wr *Writer, ev engine.StepEvent) {
 		"toolCallId": tr.ID,
 		"output":     parsedOutput,
 	})
+
+	if a.toolResultHook != nil {
+		a.toolResultHook(wr, ToolResult{
+			ToolCallID: tr.ID,
+			ToolName:   tr.Name,
+			ArgsJSON:   tr.Args,
+			Output:     tr.Output,
+		})
+	}
 }
 
 func (a *Adapter) handleStepEnd(wr *Writer) {
