@@ -128,7 +128,12 @@ func TestToAIContentParts_FileData(t *testing.T) {
 // URL produces a FilePart with Filename set (existing behaviour preserved).
 func TestToAIContentParts_FileURL(t *testing.T) {
 	parts := []EnvelopePartUnion{
-		{Type: EnvelopePartTypeFile, URL: "https://cdn.example.com/doc.pdf", MediaType: "application/pdf", Name: "doc.pdf"},
+		{
+			Type:      EnvelopePartTypeFile,
+			URL:       "https://cdn.example.com/doc.pdf",
+			MediaType: "application/pdf",
+			Name:      "doc.pdf",
+		},
 	}
 	got := ToAIContentParts(parts)
 	if len(got) != 1 {
