@@ -124,10 +124,12 @@ func handleStepEnd(ev engine.StepEvent, result *GenerateTextResult, step *StepOu
 	return nil
 }
 
-// StreamText runs the tool loop and returns a channel of engine.StepEvents for
-// callers that need live streaming (e.g. SSE adapters).
-func StreamText(ctx context.Context, req GenerateTextRequest) <-chan engine.StepEvent {
-	return engine.Run(ctx, toEngineParams(req))
+// StreamText runs the tool loop and returns a *StreamResult for callers that
+// need live streaming (e.g. SSE adapters). Use StreamResult.TextStream() for
+// text deltas, StreamResult.Events() for raw engine events, or
+// StreamResult.Consume() to block and get the full aggregated result.
+func StreamText(ctx context.Context, req GenerateTextRequest) *StreamResult {
+	return NewStreamResult(engine.Run(ctx, toEngineParams(req)))
 }
 
 // toEngineParams converts a public GenerateTextRequest to engine.RunParams.
