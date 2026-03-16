@@ -173,7 +173,13 @@ func consumeStream(eventCh <-chan StreamEvent, out chan<- StepEvent, acc *toolCa
 // emitFinalGeneration runs a tool-free generation after maxSteps are exhausted so the
 // model produces a text response incorporating earlier tool results. Returns false if
 // a fatal error was emitted and the caller should return immediately.
-func emitFinalGeneration(ctx context.Context, out chan<- StepEvent, params RunParams, history []Message, stepNum int) bool {
+func emitFinalGeneration(
+	ctx context.Context,
+	out chan<- StepEvent,
+	params RunParams,
+	history []Message,
+	stepNum int,
+) bool {
 	out <- StepEvent{Type: StepEventStepStart, StepNumber: stepNum}
 
 	// Strip tools so the model is forced to produce text, not more tool calls.
