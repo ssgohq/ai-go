@@ -39,7 +39,8 @@ func NewLanguageModel(modelID string, cfg Config) *LanguageModel {
 			SupportsStructuredOutput: true,
 			SupportsStreamUsage:      true,
 		},
-		SanitizeTools: sanitizeToolSchemas,
+		SanitizeTools:        sanitizeToolSchemas,
+		ExtraToolsForRequest: extraToolsForRequest,
 	})
 	return &LanguageModel{core: core}
 }
@@ -50,4 +51,13 @@ func (m *LanguageModel) ModelID() string { return m.core.ModelID() }
 // Stream sends a streaming chat request and returns a channel of normalized ai.StreamEvents.
 func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest) (<-chan ai.StreamEvent, error) {
 	return m.core.Stream(ctx, req)
+}
+
+// extraToolsForRequest returns Gemini-specific built-in tools based on provider options.
+func extraToolsForRequest(req ai.LanguageModelRequest) []map[string]any {
+	opts := parseProviderOptions(req.ProviderOptions)
+	if !opts.EnableGoogleSearch {
+		return nil
+	}
+	return []map[string]any{{"type": "google_search"}}
 }

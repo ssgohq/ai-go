@@ -44,6 +44,10 @@ type EncodeRequestParams struct {
 	SanitizeTools func(tools []map[string]any) []map[string]any
 	// IncludeStreamUsage enables stream_options.include_usage for streaming requests.
 	IncludeStreamUsage bool
+	// ExtraTools holds additional provider-specific tool entries to append after
+	// encoding the standard function tools. Each entry is a raw JSON-serializable
+	// map, e.g. map[string]any{"type": "google_search"} for Gemini grounding.
+	ExtraTools []map[string]any
 }
 
 // EncodeRequest converts an ai.LanguageModelRequest into a ChatRequest.
@@ -80,7 +84,7 @@ func EncodeRequest(
 		cr.Seed = req.Settings.Seed
 	}
 
-	if len(req.Tools) > 0 {
+	if len(req.Tools) > 0 || len(params.ExtraTools) > 0 {
 		toolDefs := make([]map[string]any, len(req.Tools))
 		for i, t := range req.Tools {
 			toolDefs[i] = map[string]any{
@@ -95,8 +99,11 @@ func EncodeRequest(
 		if params.SanitizeTools != nil {
 			toolDefs = params.SanitizeTools(toolDefs)
 		}
+		toolDefs = append(toolDefs, params.ExtraTools...)
 		cr.Tools = toolDefs
-		cr.ToolChoice = encodeToolChoice(req.ToolChoice)
+		if len(req.Tools) > 0 {
+			cr.ToolChoice = encodeToolChoice(req.ToolChoice)
+		}
 	}
 
 	if req.Output != nil && req.Output.Type != "text" {
