@@ -305,7 +305,7 @@ func TestEncodeRequest_FileIDInput(t *testing.T) {
 		Role: ai.RoleUser,
 		Content: []ai.ContentPart{
 			ai.TextPart("what is in this file?"),
-			{Type: ai.ContentPartTypeFile, FileURL: "file-abc123"},
+			{Type: ai.ContentPartTypeFile, FileID: "file-abc123"},
 		},
 	}
 	req := ai.LanguageModelRequest{Messages: []ai.Message{msg}}
@@ -323,6 +323,83 @@ func TestEncodeRequest_FileIDInput(t *testing.T) {
 	filePart := parts[1]
 	if filePart.FileID != "file-abc123" {
 		t.Errorf("expected file_id=file-abc123, got %q", filePart.FileID)
+	}
+}
+
+func TestEncodeRequest_ImageDataInput(t *testing.T) {
+	data := []byte("fake-png-bytes")
+	msg := ai.Message{
+		Role: ai.RoleUser,
+		Content: []ai.ContentPart{
+			ai.TextPart("describe this image"),
+			ai.ImageDataPart(data, "image/png"),
+		},
+	}
+	req := ai.LanguageModelRequest{Messages: []ai.Message{msg}}
+	r, _, err := encodeRequest("gpt-4o", req, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	parts := r.Input[0].Content
+	imgPart := parts[1]
+	if imgPart.Type != "input_image" {
+		t.Errorf("expected type=input_image, got %q", imgPart.Type)
+	}
+	if imgPart.ImageURL == "" {
+		t.Error("expected ImageURL to be set with data URI")
+	}
+	if imgPart.FileID != "" {
+		t.Errorf("expected FileID to be empty, got %q", imgPart.FileID)
+	}
+}
+
+func TestEncodeRequest_ImageFileIDInput(t *testing.T) {
+	msg := ai.Message{
+		Role: ai.RoleUser,
+		Content: []ai.ContentPart{
+			ai.TextPart("describe this image"),
+			ai.ImageFileIDPart("file-img123"),
+		},
+	}
+	req := ai.LanguageModelRequest{Messages: []ai.Message{msg}}
+	r, _, err := encodeRequest("gpt-4o", req, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	parts := r.Input[0].Content
+	imgPart := parts[1]
+	if imgPart.Type != "input_image" {
+		t.Errorf("expected type=input_image, got %q", imgPart.Type)
+	}
+	if imgPart.FileID != "file-img123" {
+		t.Errorf("expected FileID=file-img123, got %q", imgPart.FileID)
+	}
+}
+
+func TestEncodeRequest_FileDataInput(t *testing.T) {
+	data := []byte("pdf-content")
+	msg := ai.Message{
+		Role: ai.RoleUser,
+		Content: []ai.ContentPart{
+			ai.TextPart("summarize this file"),
+			ai.FileDataPart(data, "application/pdf", "doc.pdf"),
+		},
+	}
+	req := ai.LanguageModelRequest{Messages: []ai.Message{msg}}
+	r, _, err := encodeRequest("gpt-4o", req, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	parts := r.Input[0].Content
+	filePart := parts[1]
+	if filePart.Type != "input_file" {
+		t.Errorf("expected type=input_file, got %q", filePart.Type)
+	}
+	if filePart.FileURL == "" {
+		t.Error("expected FileURL to be set with data URI")
+	}
+	if filePart.Filename != "doc.pdf" {
+		t.Errorf("expected Filename=doc.pdf, got %q", filePart.Filename)
 	}
 }
 

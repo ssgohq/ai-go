@@ -54,7 +54,7 @@ const (
 )
 
 // EnvelopePartUnion holds one content part inside an EnvelopeMessage.
-// Only the field matching Type is populated.
+// Only the fields matching Type are populated.
 type EnvelopePartUnion struct {
 	Type EnvelopePartType `json:"type"`
 
@@ -70,4 +70,12 @@ type EnvelopePartUnion struct {
 
 	// Name is the original filename for file parts.
 	Name string `json:"name,omitempty"`
+
+	// FileID is a provider-specific file identifier (e.g. OpenAI "file-abc123").
+	// When set, URL is ignored and the provider file ID is used directly.
+	FileID string `json:"fileId,omitempty"`
+
+	// Data holds inline binary content for image or file parts (base64-encoded in JSON).
+	// When set, URL is ignored and the data is sent inline.
+	Data []byte `json:"data,omitempty"`
 }

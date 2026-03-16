@@ -87,6 +87,126 @@ func TestToolResultPart(t *testing.T) {
 	}
 }
 
+func TestImageDataPart(t *testing.T) {
+	data := []byte{0x89, 0x50, 0x4e, 0x47}
+	p := ImageDataPart(data, "image/png")
+	if p.Type != ContentPartTypeImage {
+		t.Errorf("expected image_url type, got %s", p.Type)
+	}
+	if string(p.Data) != string(data) {
+		t.Errorf("unexpected Data: %v", p.Data)
+	}
+	if p.MimeType != "image/png" {
+		t.Errorf("unexpected MimeType: %s", p.MimeType)
+	}
+}
+
+func TestImageFileIDPart(t *testing.T) {
+	p := ImageFileIDPart("file-abc123")
+	if p.Type != ContentPartTypeImage {
+		t.Errorf("expected image_url type, got %s", p.Type)
+	}
+	if p.FileID != "file-abc123" {
+		t.Errorf("unexpected FileID: %s", p.FileID)
+	}
+}
+
+func TestFileDataPart(t *testing.T) {
+	data := []byte("%PDF-1.4")
+	p := FileDataPart(data, "application/pdf", "report.pdf")
+	if p.Type != ContentPartTypeFile {
+		t.Errorf("expected file type, got %s", p.Type)
+	}
+	if string(p.Data) != string(data) {
+		t.Errorf("unexpected Data: %v", p.Data)
+	}
+	if p.MimeType != "application/pdf" {
+		t.Errorf("unexpected MimeType: %s", p.MimeType)
+	}
+	if p.Filename != "report.pdf" {
+		t.Errorf("unexpected Filename: %s", p.Filename)
+	}
+}
+
+func TestFileIDPart(t *testing.T) {
+	p := FileIDPart("file-xyz", "application/pdf")
+	if p.Type != ContentPartTypeFile {
+		t.Errorf("expected file type, got %s", p.Type)
+	}
+	if p.FileID != "file-xyz" {
+		t.Errorf("unexpected FileID: %s", p.FileID)
+	}
+	if p.MimeType != "application/pdf" {
+		t.Errorf("unexpected MimeType: %s", p.MimeType)
+	}
+}
+
+func TestContentPartTypeImageAlias(t *testing.T) {
+	if ContentPartTypeImage != ContentPartTypeImageURL {
+		t.Errorf("ContentPartTypeImage should equal ContentPartTypeImageURL")
+	}
+}
+
+// --- Round-trip tests for new multimodal constructors ---
+
+func TestContentPartRoundTrip_ImageData(t *testing.T) {
+	data := []byte{0x89, 0x50, 0x4e, 0x47}
+	parts := []ContentPart{ImageDataPart(data, "image/png")}
+	rt := fromEngineContentParts(toEngineContentParts(parts))
+	if rt[0].Type != ContentPartTypeImage {
+		t.Errorf("expected image_url type, got %s", rt[0].Type)
+	}
+	if string(rt[0].Data) != string(data) {
+		t.Errorf("unexpected Data after round-trip: %v", rt[0].Data)
+	}
+	if rt[0].MimeType != "image/png" {
+		t.Errorf("unexpected MimeType: %s", rt[0].MimeType)
+	}
+}
+
+func TestContentPartRoundTrip_ImageFileID(t *testing.T) {
+	parts := []ContentPart{ImageFileIDPart("file-abc123")}
+	rt := fromEngineContentParts(toEngineContentParts(parts))
+	if rt[0].Type != ContentPartTypeImage {
+		t.Errorf("expected image_url type, got %s", rt[0].Type)
+	}
+	if rt[0].FileID != "file-abc123" {
+		t.Errorf("unexpected FileID: %s", rt[0].FileID)
+	}
+}
+
+func TestContentPartRoundTrip_FileData(t *testing.T) {
+	data := []byte("%PDF-1.4")
+	parts := []ContentPart{FileDataPart(data, "application/pdf", "report.pdf")}
+	rt := fromEngineContentParts(toEngineContentParts(parts))
+	if rt[0].Type != ContentPartTypeFile {
+		t.Errorf("expected file type, got %s", rt[0].Type)
+	}
+	if string(rt[0].Data) != string(data) {
+		t.Errorf("unexpected Data after round-trip: %v", rt[0].Data)
+	}
+	if rt[0].MimeType != "application/pdf" {
+		t.Errorf("unexpected MimeType: %s", rt[0].MimeType)
+	}
+	if rt[0].Filename != "report.pdf" {
+		t.Errorf("unexpected Filename: %s", rt[0].Filename)
+	}
+}
+
+func TestContentPartRoundTrip_FileID(t *testing.T) {
+	parts := []ContentPart{FileIDPart("file-xyz", "application/pdf")}
+	rt := fromEngineContentParts(toEngineContentParts(parts))
+	if rt[0].Type != ContentPartTypeFile {
+		t.Errorf("expected file type, got %s", rt[0].Type)
+	}
+	if rt[0].FileID != "file-xyz" {
+		t.Errorf("unexpected FileID: %s", rt[0].FileID)
+	}
+	if rt[0].MimeType != "application/pdf" {
+		t.Errorf("unexpected MimeType: %s", rt[0].MimeType)
+	}
+}
+
 // --- Message constructors ---
 
 func TestUserMessage(t *testing.T) {
