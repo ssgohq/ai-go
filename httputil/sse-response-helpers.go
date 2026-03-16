@@ -39,7 +39,10 @@ func NewSSEWriter(w http.ResponseWriter) io.Writer {
 	h.Set("Connection", "keep-alive")
 	h.Set("x-vercel-ai-ui-message-stream", "v1")
 
-	f, _ := w.(http.Flusher)
+	var f http.Flusher
+	if flusher, ok := w.(http.Flusher); ok {
+		f = flusher
+	}
 	return &sseWriter{w: w, f: f}
 }
 

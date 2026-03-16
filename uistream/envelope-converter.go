@@ -31,7 +31,7 @@ func ToGenerateTextRequestFromRegistry(
 	envelope ChatRequestEnvelope,
 	registry *ai.Registry,
 ) (ai.GenerateTextRequest, error) {
-	modelID, _ := envelope.Body["modelId"].(string)
+	modelID, _ := envelope.Body["modelId"].(string) //nolint:errcheck // type assertion ok
 	if modelID == "" {
 		return ai.GenerateTextRequest{}, fmt.Errorf("envelope-converter: Body[\"modelId\"] is missing or empty")
 	}
