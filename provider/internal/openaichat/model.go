@@ -34,6 +34,10 @@ type ModelConfig struct {
 	// sending. The map is a JSON-serializable representation of ChatRequest.
 	// Extra keys added here are preserved in the outgoing request body.
 	TransformRequestBody func(body map[string]any) map[string]any
+	// ExtraToolsForRequest is an optional hook to supply additional provider-specific
+	// tool entries per request (e.g. {"type": "google_search"} for Gemini grounding).
+	// Called with the current ai.LanguageModelRequest; may return nil.
+	ExtraToolsForRequest func(req ai.LanguageModelRequest) []map[string]any
 	// MetadataExtractor is an optional hook to extract provider metadata from SSE chunks.
 	MetadataExtractor func(chunk StreamChunk) map[string]any
 }
@@ -65,6 +69,9 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 		ModelID:            m.cfg.ModelID,
 		SanitizeTools:      m.cfg.SanitizeTools,
 		IncludeStreamUsage: m.cfg.Capabilities.SupportsStreamUsage,
+	}
+	if m.cfg.ExtraToolsForRequest != nil {
+		params.ExtraTools = m.cfg.ExtraToolsForRequest(req)
 	}
 
 	cr, err := EncodeRequest(params, req, true)
