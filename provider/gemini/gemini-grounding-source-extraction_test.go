@@ -283,6 +283,8 @@ data: [DONE]
 	events := collectEvents(streamFromString(sse))
 
 	// Verify source was extracted from the non-final chunk.
+	// Find the first finish event that carries metadata (the one from the finish_reason chunk,
+	// not the [DONE] sentinel which emits a bare finish with no metadata).
 	var sources []ai.StreamEvent
 	var finishEvent *ai.StreamEvent
 	for i := range events {
@@ -290,7 +292,7 @@ data: [DONE]
 		case ai.StreamEventSource:
 			sources = append(sources, events[i])
 		case ai.StreamEventFinish:
-			if events[i].RawFinishReason == "stop" {
+			if events[i].RawFinishReason == "stop" && events[i].ProviderMetadata != nil && finishEvent == nil {
 				finishEvent = &events[i]
 			}
 		}
@@ -304,10 +306,7 @@ data: [DONE]
 	}
 
 	if finishEvent == nil {
-		t.Fatal("expected a finish event with RawFinishReason=stop")
-	}
-	if finishEvent.ProviderMetadata == nil {
-		t.Fatal("expected ProviderMetadata to be carried on finish event from earlier chunk")
+		t.Fatal("expected a finish event with RawFinishReason=stop and metadata")
 	}
 
 	google, ok := finishEvent.ProviderMetadata["google"].(map[string]any)

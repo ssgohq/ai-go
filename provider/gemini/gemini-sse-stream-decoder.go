@@ -16,12 +16,22 @@ import (
 func decodeSSEStream(ctx context.Context, body io.ReadCloser, ch chan<- ai.StreamEvent) {
 	seen := make(map[string]bool)
 
-	// lastMeta holds the most-recently-seen google metadata across all chunks.
+	// lastMeta holds the most-recently-seen google metadata map across all chunks.
+	// Updated by the source extractor (called for every chunk) so that the
+	// metadata extractor (called only on finish chunks) can return it.
 	var lastMeta map[string]any
 
+	sourceExtractor := func(chunk openaichat.StreamChunk) []ai.Source {
+		// Side-effect: accumulate google metadata on every chunk.
+		if m := buildGoogleMetadata(chunk); m != nil {
+			lastMeta = m
+		}
+		return deduplicatedGroundingSources(chunk, seen)
+	}
+
 	metaExtractor := func(chunk openaichat.StreamChunk) map[string]any {
-		m := buildGoogleMetadata(chunk)
-		if m != nil {
+		// Also update from this (finish) chunk in case metadata arrives on the finish chunk.
+		if m := buildGoogleMetadata(chunk); m != nil {
 			lastMeta = m
 		}
 		if lastMeta == nil {
@@ -30,8 +40,6 @@ func decodeSSEStream(ctx context.Context, body io.ReadCloser, ch chan<- ai.Strea
 		return map[string]any{"google": lastMeta}
 	}
 
-	sourceExtractor := deduplicatedSourceExtractor(seen)
-
 	openaichat.DecodeSSEStream(ctx, body, ch, openaichat.SSEDecodeParams{
 		ProviderName:      "gemini",
 		MetadataExtractor: metaExtractor,
@@ -39,42 +47,40 @@ func decodeSSEStream(ctx context.Context, body io.ReadCloser, ch chan<- ai.Strea
 	})
 }
 
-// deduplicatedSourceExtractor returns a SourceExtractor closure that deduplicates sources
-// by their key (URL for web, URI for other types) across all stream chunks.
-func deduplicatedSourceExtractor(seen map[string]bool) func(openaichat.StreamChunk) []ai.Source {
-	return func(chunk openaichat.StreamChunk) []ai.Source {
-		gm := groundingMetadataFromChunk(chunk)
-		if gm == nil {
-			return nil
-		}
-		chunks, ok := gm["groundingChunks"].([]any)
-		if !ok {
-			return nil
-		}
-		var sources []ai.Source
-		for _, c := range chunks {
-			cm, ok := c.(map[string]any)
-			if !ok {
-				continue
-			}
-			if src := extractWebSource(cm, seen); src != nil {
-				sources = append(sources, *src)
-				continue
-			}
-			if src := extractRetrievedContextSource(cm, seen); src != nil {
-				sources = append(sources, *src)
-				continue
-			}
-			if src := extractImageSource(cm, seen); src != nil {
-				sources = append(sources, *src)
-				continue
-			}
-			if src := extractMapsSource(cm, seen); src != nil {
-				sources = append(sources, *src)
-			}
-		}
-		return sources
+// deduplicatedGroundingSources extracts all grounding sources from a chunk,
+// deduplicating by key across calls using the shared seen map.
+func deduplicatedGroundingSources(chunk openaichat.StreamChunk, seen map[string]bool) []ai.Source {
+	gm := groundingMetadataFromChunk(chunk)
+	if gm == nil {
+		return nil
 	}
+	chunks, ok := gm["groundingChunks"].([]any)
+	if !ok {
+		return nil
+	}
+	var sources []ai.Source
+	for _, c := range chunks {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		if src := extractWebSource(cm, seen); src != nil {
+			sources = append(sources, *src)
+			continue
+		}
+		if src := extractRetrievedContextSource(cm, seen); src != nil {
+			sources = append(sources, *src)
+			continue
+		}
+		if src := extractImageSource(cm, seen); src != nil {
+			sources = append(sources, *src)
+			continue
+		}
+		if src := extractMapsSource(cm, seen); src != nil {
+			sources = append(sources, *src)
+		}
+	}
+	return sources
 }
 
 // extractWebSource extracts a "url" source from a grounding chunk's "web" field.
@@ -91,7 +97,10 @@ func extractWebSource(cm map[string]any, seen map[string]bool) *ai.Source {
 		return nil
 	}
 	seen[uri] = true
-	title, _ := web["title"].(string)
+	var title string
+	if t, ok := web["title"].(string); ok {
+		title = t
+	}
 	return &ai.Source{
 		SourceType: "url",
 		URL:        uri,
@@ -113,7 +122,10 @@ func extractRetrievedContextSource(cm map[string]any, seen map[string]bool) *ai.
 		return nil
 	}
 	seen[uri] = true
-	title, _ := rc["title"].(string)
+	var title string
+	if t, ok := rc["title"].(string); ok {
+		title = t
+	}
 	return &ai.Source{
 		SourceType: "retrieved-context",
 		URL:        uri,
@@ -127,7 +139,10 @@ func extractImageSource(cm map[string]any, seen map[string]bool) *ai.Source {
 	if !ok {
 		return nil
 	}
-	uri, _ := img["uri"].(string)
+	uri, ok := img["uri"].(string)
+	if !ok {
+		uri = ""
+	}
 	if uri == "" {
 		// Some image chunks may only have other fields; use a placeholder key.
 		uri = "image-chunk"
@@ -137,7 +152,10 @@ func extractImageSource(cm map[string]any, seen map[string]bool) *ai.Source {
 		return nil
 	}
 	seen[key] = true
-	title, _ := img["title"].(string)
+	var title string
+	if t, ok := img["title"].(string); ok {
+		title = t
+	}
 	return &ai.Source{
 		SourceType:       "image",
 		URL:              uri,
@@ -152,19 +170,22 @@ func extractMapsSource(cm map[string]any, seen map[string]bool) *ai.Source {
 	if !ok {
 		return nil
 	}
-	uri, _ := maps["uri"].(string)
-	if uri == "" {
-		uri = "maps-chunk"
+	mapsURI, ok := maps["uri"].(string)
+	if !ok || mapsURI == "" {
+		mapsURI = "maps-chunk"
 	}
-	key := "maps:" + uri
+	key := "maps:" + mapsURI
 	if seen[key] {
 		return nil
 	}
 	seen[key] = true
-	title, _ := maps["title"].(string)
+	var title string
+	if t, ok := maps["title"].(string); ok {
+		title = t
+	}
 	return &ai.Source{
 		SourceType:       "maps",
-		URL:              uri,
+		URL:              mapsURI,
 		Title:            title,
 		ProviderMetadata: map[string]any{"maps": maps},
 	}
