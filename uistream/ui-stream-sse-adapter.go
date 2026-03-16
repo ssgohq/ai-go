@@ -28,7 +28,7 @@ type ToolResultHook func(wr *Writer, result ToolResult)
 type Adapter struct {
 	msgID          string
 	toolResultHook ToolResultHook
-	onFinish       func(text string, finishReason string)
+	onFinish       func(text, finishReason string)
 }
 
 // NewAdapter creates an Adapter with a fixed message ID.
@@ -47,7 +47,7 @@ func (a *Adapter) WithToolResultHook(hook ToolResultHook) *Adapter {
 // WithOnFinish sets a callback invoked after the stream completes.
 // text is the full accumulated assistant text; finishReason is "stop" or the
 // finish reason captured from the last finish chunk.
-func (a *Adapter) WithOnFinish(fn func(text string, finishReason string)) *Adapter {
+func (a *Adapter) WithOnFinish(fn func(text, finishReason string)) *Adapter {
 	a.onFinish = fn
 	return a
 }
