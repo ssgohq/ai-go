@@ -12,8 +12,23 @@ type ProviderOptions struct {
 
 // GoogleSearchConfig contains optional configuration for Google Search grounding.
 type GoogleSearchConfig struct {
-	// DynamicRetrievalThreshold is the threshold for dynamic retrieval mode (0.0-1.0).
+	// DynamicRetrievalThreshold controls when grounding is triggered (0.0-1.0).
+	// When set, MODE_DYNAMIC is used; otherwise the grounding always applies.
 	DynamicRetrievalThreshold *float64
+
+	// SearchTypes specifies which search types to use (e.g. "web", "image").
+	SearchTypes []string
+
+	// TimeRangeFilter restricts search results to a specific time range.
+	TimeRangeFilter *TimeRangeFilter
+}
+
+// TimeRangeFilter restricts Google Search grounding results to a time range.
+type TimeRangeFilter struct {
+	// StartTime is the start of the time range in RFC3339 format.
+	StartTime string
+	// EndTime is the end of the time range in RFC3339 format.
+	EndTime string
 }
 
 // parseProviderOptions extracts Gemini-specific options from a provider options map.
