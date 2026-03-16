@@ -135,3 +135,194 @@ data: [DONE]
 		t.Errorf("expected 1 unique source across chunks, got %d", len(sources))
 	}
 }
+
+func TestGrounding_MixedSourceTypes(t *testing.T) {
+	// Fixture with web + retrievedContext + image chunks.
+	sse := `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"provider_metadata":{"google":{"groundingMetadata":{"groundingChunks":[{"web":{"uri":"https://web.example.com","title":"Web Result"}},{"retrievedContext":{"uri":"https://doc.example.com/doc1","title":"Doc One"}},{"image":{"uri":"https://img.example.com/photo.jpg","title":"Photo"}}]}}}}
+data: [DONE]
+`
+	events := collectEvents(streamFromString(sse))
+
+	var sources []ai.StreamEvent
+	for _, e := range events {
+		if e.Type == ai.StreamEventSource {
+			sources = append(sources, e)
+		}
+	}
+
+	if len(sources) != 3 {
+		t.Fatalf("expected 3 source events (web+retrievedContext+image), got %d", len(sources))
+	}
+
+	byType := make(map[string]*ai.Source)
+	for i := range sources {
+		byType[sources[i].Source.SourceType] = sources[i].Source
+	}
+
+	webSrc, ok := byType["url"]
+	if !ok {
+		t.Fatal("expected a source with SourceType=url")
+	}
+	if webSrc.URL != "https://web.example.com" {
+		t.Errorf("unexpected web URL: %q", webSrc.URL)
+	}
+	if webSrc.Title != "Web Result" {
+		t.Errorf("unexpected web title: %q", webSrc.Title)
+	}
+
+	rcSrc, ok := byType["retrieved-context"]
+	if !ok {
+		t.Fatal("expected a source with SourceType=retrieved-context")
+	}
+	if rcSrc.URL != "https://doc.example.com/doc1" {
+		t.Errorf("unexpected retrieved-context URL: %q", rcSrc.URL)
+	}
+	if rcSrc.Title != "Doc One" {
+		t.Errorf("unexpected retrieved-context title: %q", rcSrc.Title)
+	}
+
+	imgSrc, ok := byType["image"]
+	if !ok {
+		t.Fatal("expected a source with SourceType=image")
+	}
+	if imgSrc.URL != "https://img.example.com/photo.jpg" {
+		t.Errorf("unexpected image URL: %q", imgSrc.URL)
+	}
+	if imgSrc.Title != "Photo" {
+		t.Errorf("unexpected image title: %q", imgSrc.Title)
+	}
+}
+
+func TestGrounding_SafetyRatingsInMetadata(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"provider_metadata":{"google":{"groundingMetadata":{"webSearchQueries":["test"]},"safetyRatings":[{"category":"HARM_CATEGORY_HATE_SPEECH","probability":"NEGLIGIBLE"}]}}}
+data: [DONE]
+`
+	events := collectEvents(streamFromString(sse))
+
+	var finishEvent *ai.StreamEvent
+	for i := range events {
+		if events[i].Type == ai.StreamEventFinish {
+			finishEvent = &events[i]
+			break
+		}
+	}
+	if finishEvent == nil {
+		t.Fatal("expected a finish event")
+	}
+	if finishEvent.ProviderMetadata == nil {
+		t.Fatal("expected ProviderMetadata on finish event")
+	}
+
+	google, ok := finishEvent.ProviderMetadata["google"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected google metadata map, got %T", finishEvent.ProviderMetadata["google"])
+	}
+
+	sr, ok := google["safetyRatings"]
+	if !ok {
+		t.Fatal("expected safetyRatings in google metadata")
+	}
+	ratings, ok := sr.([]any)
+	if !ok || len(ratings) == 0 {
+		t.Fatalf("expected safetyRatings to be a non-empty array, got %T %v", sr, sr)
+	}
+	first, ok := ratings[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first safetyRating to be a map, got %T", ratings[0])
+	}
+	if first["category"] != "HARM_CATEGORY_HATE_SPEECH" {
+		t.Errorf("unexpected safety rating category: %v", first["category"])
+	}
+}
+
+func TestGrounding_URLContextMetadata(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"provider_metadata":{"google":{"urlContextMetadata":{"urlMetadata":[{"retrievedUrl":"https://example.com","urlRetrievalStatus":"URL_RETRIEVAL_STATUS_SUCCESS"}]}}}}
+data: [DONE]
+`
+	events := collectEvents(streamFromString(sse))
+
+	var finishEvent *ai.StreamEvent
+	for i := range events {
+		if events[i].Type == ai.StreamEventFinish {
+			finishEvent = &events[i]
+			break
+		}
+	}
+	if finishEvent == nil {
+		t.Fatal("expected a finish event")
+	}
+	if finishEvent.ProviderMetadata == nil {
+		t.Fatal("expected ProviderMetadata on finish event")
+	}
+
+	google, ok := finishEvent.ProviderMetadata["google"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected google metadata map, got %T", finishEvent.ProviderMetadata["google"])
+	}
+
+	uc, ok := google["urlContextMetadata"]
+	if !ok {
+		t.Fatal("expected urlContextMetadata in google metadata")
+	}
+	ucMap, ok := uc.(map[string]any)
+	if !ok {
+		t.Fatalf("expected urlContextMetadata to be a map, got %T", uc)
+	}
+	if _, ok := ucMap["urlMetadata"]; !ok {
+		t.Error("expected urlMetadata key in urlContextMetadata")
+	}
+}
+
+func TestGrounding_MetadataInNonFinalChunk(t *testing.T) {
+	// groundingMetadata arrives in a non-final chunk (before finish_reason).
+	// The finish event should still carry the accumulated metadata.
+	sse := `data: {"choices":[{"delta":{"content":"answer"},"finish_reason":null}],"provider_metadata":{"google":{"groundingMetadata":{"webSearchQueries":["non-final query"],"groundingChunks":[{"web":{"uri":"https://early.example.com","title":"Early Source"}}]}}}}
+data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+data: [DONE]
+`
+	events := collectEvents(streamFromString(sse))
+
+	// Verify source was extracted from the non-final chunk.
+	var sources []ai.StreamEvent
+	var finishEvent *ai.StreamEvent
+	for i := range events {
+		switch events[i].Type {
+		case ai.StreamEventSource:
+			sources = append(sources, events[i])
+		case ai.StreamEventFinish:
+			if events[i].RawFinishReason == "stop" {
+				finishEvent = &events[i]
+			}
+		}
+	}
+
+	if len(sources) != 1 {
+		t.Fatalf("expected 1 source from non-final chunk, got %d", len(sources))
+	}
+	if sources[0].Source.URL != "https://early.example.com" {
+		t.Errorf("unexpected source URL: %q", sources[0].Source.URL)
+	}
+
+	if finishEvent == nil {
+		t.Fatal("expected a finish event with RawFinishReason=stop")
+	}
+	if finishEvent.ProviderMetadata == nil {
+		t.Fatal("expected ProviderMetadata to be carried on finish event from earlier chunk")
+	}
+
+	google, ok := finishEvent.ProviderMetadata["google"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected google metadata map on finish, got %T", finishEvent.ProviderMetadata["google"])
+	}
+	gm, ok := google["groundingMetadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected groundingMetadata on finish, got %T", google["groundingMetadata"])
+	}
+	queries, ok := gm["webSearchQueries"].([]any)
+	if !ok || len(queries) == 0 {
+		t.Errorf("expected webSearchQueries in accumulated groundingMetadata, got %v", gm["webSearchQueries"])
+	}
+	if queries[0] != "non-final query" {
+		t.Errorf("unexpected webSearchQuery: %q", queries[0])
+	}
+}

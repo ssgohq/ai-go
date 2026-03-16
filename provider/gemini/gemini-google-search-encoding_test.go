@@ -129,3 +129,237 @@ func TestGoogleSearch_ParseProviderOptions_MissingKey(t *testing.T) {
 		t.Error("expected EnableGoogleSearch=false when gemini key missing")
 	}
 }
+
+func TestGoogleSearch_WithDynamicRetrievalThreshold(t *testing.T) {
+	threshold := 0.7
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("news today")},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{
+				EnableGoogleSearch: true,
+				GoogleSearchConfig: &GoogleSearchConfig{
+					DynamicRetrievalThreshold: &threshold,
+				},
+			},
+		},
+	}
+
+	cr, err := encodeWithExtraTools(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cr.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(cr.Tools))
+	}
+
+	tool := cr.Tools[0]
+	if tool["type"] != "google_search" {
+		t.Errorf("expected type=google_search, got %v", tool["type"])
+	}
+
+	searchCfg, ok := tool["google_search"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected google_search config map, got %T", tool["google_search"])
+	}
+
+	dynCfg, ok := searchCfg["dynamic_retrieval_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected dynamic_retrieval_config map, got %T", searchCfg["dynamic_retrieval_config"])
+	}
+	if dynCfg["mode"] != "MODE_DYNAMIC" {
+		t.Errorf("expected mode=MODE_DYNAMIC, got %v", dynCfg["mode"])
+	}
+	if dynCfg["dynamic_threshold"] != threshold {
+		t.Errorf("expected dynamic_threshold=%v, got %v", threshold, dynCfg["dynamic_threshold"])
+	}
+}
+
+func TestGoogleSearch_WithSearchTypes(t *testing.T) {
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("find images")},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{
+				EnableGoogleSearch: true,
+				GoogleSearchConfig: &GoogleSearchConfig{
+					SearchTypes: []string{"web", "image"},
+				},
+			},
+		},
+	}
+
+	cr, err := encodeWithExtraTools(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cr.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(cr.Tools))
+	}
+
+	tool := cr.Tools[0]
+	searchCfg, ok := tool["google_search"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected google_search config map, got %T", tool["google_search"])
+	}
+
+	types, ok := searchCfg["search_types"].([]string)
+	if !ok {
+		t.Fatalf("expected search_types []string, got %T", searchCfg["search_types"])
+	}
+	if len(types) != 2 || types[0] != "web" || types[1] != "image" {
+		t.Errorf("expected search_types=[web image], got %v", types)
+	}
+}
+
+func TestGoogleSearch_WithTimeRangeFilter(t *testing.T) {
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("recent events")},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{
+				EnableGoogleSearch: true,
+				GoogleSearchConfig: &GoogleSearchConfig{
+					TimeRangeFilter: &TimeRangeFilter{
+						StartTime: "2024-01-01T00:00:00Z",
+						EndTime:   "2024-12-31T23:59:59Z",
+					},
+				},
+			},
+		},
+	}
+
+	cr, err := encodeWithExtraTools(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cr.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(cr.Tools))
+	}
+
+	tool := cr.Tools[0]
+	searchCfg, ok := tool["google_search"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected google_search config map, got %T", tool["google_search"])
+	}
+
+	trf, ok := searchCfg["time_range_filter"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected time_range_filter map, got %T", searchCfg["time_range_filter"])
+	}
+	if trf["start_time"] != "2024-01-01T00:00:00Z" {
+		t.Errorf("expected start_time=2024-01-01T00:00:00Z, got %v", trf["start_time"])
+	}
+	if trf["end_time"] != "2024-12-31T23:59:59Z" {
+		t.Errorf("expected end_time=2024-12-31T23:59:59Z, got %v", trf["end_time"])
+	}
+}
+
+func TestGoogleSearch_NoConfigNoGoogleSearchKey(t *testing.T) {
+	// When GoogleSearchConfig is nil, the tool should have no "google_search" key.
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("search")},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{EnableGoogleSearch: true},
+		},
+	}
+
+	cr, err := encodeWithExtraTools(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cr.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(cr.Tools))
+	}
+	if _, ok := cr.Tools[0]["google_search"]; ok {
+		t.Error("expected no google_search config key when GoogleSearchConfig is nil")
+	}
+}
+
+// --- Warning tests ---
+
+func TestGoogleSearch_WarningTopKWithSearch(t *testing.T) {
+	topK := 40
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("search")},
+		Settings: ai.CallSettings{TopK: &topK},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{EnableGoogleSearch: true},
+		},
+	}
+
+	warnings := warningsForRequest(req)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d", len(warnings))
+	}
+	if warnings[0].Type != "unsupported-setting" {
+		t.Errorf("expected type=unsupported-setting, got %v", warnings[0].Type)
+	}
+	if warnings[0].Setting != "topK" {
+		t.Errorf("expected setting=topK, got %v", warnings[0].Setting)
+	}
+}
+
+func TestGoogleSearch_WarningSeedWithSearch(t *testing.T) {
+	seed := 42
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("search")},
+		Settings: ai.CallSettings{Seed: &seed},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{EnableGoogleSearch: true},
+		},
+	}
+
+	warnings := warningsForRequest(req)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d", len(warnings))
+	}
+	if warnings[0].Type != "unsupported-setting" {
+		t.Errorf("expected type=unsupported-setting, got %v", warnings[0].Type)
+	}
+	if warnings[0].Setting != "seed" {
+		t.Errorf("expected setting=seed, got %v", warnings[0].Setting)
+	}
+}
+
+func TestGoogleSearch_WarningBothTopKAndSeedWithSearch(t *testing.T) {
+	topK := 40
+	seed := 42
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("search")},
+		Settings: ai.CallSettings{TopK: &topK, Seed: &seed},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{EnableGoogleSearch: true},
+		},
+	}
+
+	warnings := warningsForRequest(req)
+	if len(warnings) != 2 {
+		t.Fatalf("expected 2 warnings, got %d", len(warnings))
+	}
+}
+
+func TestGoogleSearch_NoWarningsWithoutSearch(t *testing.T) {
+	topK := 40
+	seed := 42
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("hello")},
+		Settings: ai.CallSettings{TopK: &topK, Seed: &seed},
+	}
+
+	warnings := warningsForRequest(req)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings when search is disabled, got %d", len(warnings))
+	}
+}
+
+func TestGoogleSearch_NoWarningsNormalSearch(t *testing.T) {
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("search")},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{EnableGoogleSearch: true},
+		},
+	}
+
+	warnings := warningsForRequest(req)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings for normal search request, got %d", len(warnings))
+	}
+}
