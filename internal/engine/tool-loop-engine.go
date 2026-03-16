@@ -147,6 +147,51 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		}
 	}
 
+	// maxSteps exhausted after tool calls — run one final generation so the model
+	// can produce a text response that incorporates the tool results.
+	out <- StepEvent{Type: StepEventStepStart, StepNumber: maxSteps}
+	req := params.Request
+	req.System = ""
+	req.Messages = history
+
+	// Strip tools so the model is forced to produce text, not more tool calls.
+	eventCh, err := params.Model.Stream(ctx, Request{
+		Messages: req.Messages,
+	})
+	if err != nil {
+		out <- StepEvent{Type: StepEventError, Error: fmt.Errorf("final step: start stream: %w", err)}
+		return
+	}
+
+	var lastFinish FinishReason
+	var lastRawFinish string
+	var lastProviderMeta map[string]any
+	for ev := range eventCh {
+		switch ev.Type {
+		case StreamEventTextDelta:
+			out <- StepEvent{Type: StepEventTextDelta, TextDelta: ev.TextDelta}
+		case StreamEventReasoningDelta:
+			out <- StepEvent{Type: StepEventReasoningDelta, ReasoningDelta: ev.TextDelta}
+		case StreamEventUsage:
+			out <- StepEvent{Type: StepEventUsage, Usage: ev.Usage}
+		case StreamEventFinish:
+			lastFinish = ev.FinishReason
+			lastRawFinish = ev.RawFinishReason
+			lastProviderMeta = ev.ProviderMetadata
+		case StreamEventError:
+			out <- StepEvent{Type: StepEventError, Error: ev.Error}
+			return
+		}
+	}
+
+	out <- StepEvent{
+		Type:             StepEventStepEnd,
+		StepNumber:       maxSteps,
+		FinishReason:     lastFinish,
+		RawFinishReason:  lastRawFinish,
+		ProviderMetadata: lastProviderMeta,
+	}
+
 	emitStructuredOutput(ctx, out, params, history)
 	out <- StepEvent{Type: StepEventDone}
 }

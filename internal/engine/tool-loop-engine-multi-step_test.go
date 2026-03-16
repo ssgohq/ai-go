@@ -164,12 +164,17 @@ func TestRunLoop_StepCountIs(t *testing.T) {
 
 func TestRunLoop_MaxStepsExhausted(t *testing.T) {
 	exec := &mockExecutor{}
-	calls := make([][]StreamEvent, 3)
-	for i := range calls {
+	calls := make([][]StreamEvent, 4) // 3 tool-call steps + 1 final text step
+	for i := 0; i < 3; i++ {
 		calls[i] = []StreamEvent{
 			toolCallEvt(0, "tc", "loop", `{}`),
 			finishEvt(FinishReasonToolCalls),
 		}
+	}
+	// Final generation step (no tools) returns text.
+	calls[3] = []StreamEvent{
+		{Type: StreamEventTextDelta, TextDelta: "done"},
+		finishEvt(FinishReasonStop),
 	}
 	model := &mockModel{calls: calls}
 
