@@ -1,17 +1,12 @@
 package ai
 
-import (
-	"sync"
-
-	"github.com/open-ai-sdk/ai-go/internal/engine"
-)
+import "github.com/open-ai-sdk/ai-go/internal/engine"
 
 // StreamResult wraps a streaming response with convenient accessors.
 // It fans out the source engine channel to text-delta and raw-event subscribers.
 type StreamResult struct {
 	src <-chan engine.StepEvent
 
-	once      sync.Once
 	textCh    chan string
 	eventsCh  chan engine.StepEvent
 	consumeCh chan engine.StepEvent

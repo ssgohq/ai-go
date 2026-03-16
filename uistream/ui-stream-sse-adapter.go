@@ -97,21 +97,26 @@ func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
 		case ChunkFinish:
 			wr.WriteFinish()
 		case ChunkError:
-			msg, _ := c.Fields["errorText"].(string)
+			msg, ok := c.Fields["errorText"].(string)
+			if !ok {
+				msg = "stream error"
+			}
 			wr.WriteError(msg)
 		default:
 			wr.WriteChunk(c.Type, c.Fields)
 
 			// Fire hook after tool-output-available with raw string data.
 			if c.Type == ChunkToolOutputAvailable && a.toolResultHook != nil {
-				tcID, _ := c.Fields["toolCallId"].(string)
-				if td, ok := toolCache[tcID]; ok {
-					a.toolResultHook(wr, ToolResult{
-						ToolCallID: tcID,
-						ToolName:   td.toolName,
-						ArgsJSON:   td.argsJSON,
-						Output:     td.output,
-					})
+				tcID, ok := c.Fields["toolCallId"].(string)
+				if ok {
+					if td, found := toolCache[tcID]; found {
+						a.toolResultHook(wr, ToolResult{
+							ToolCallID: tcID,
+							ToolName:   td.toolName,
+							ArgsJSON:   td.argsJSON,
+							Output:     td.output,
+						})
+					}
 				}
 			}
 		}

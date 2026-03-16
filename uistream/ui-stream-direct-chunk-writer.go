@@ -66,4 +66,3 @@ func (wr *Writer) WriteSource(s Source) {
 func (wr *Writer) WriteSources(sources []Source) {
 	WriteSSE(wr.w, Chunk{Type: ChunkSources, Fields: map[string]any{"sources": sources}})
 }
-
