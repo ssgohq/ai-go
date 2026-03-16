@@ -10,7 +10,7 @@ import (
 
 // weatherInput is a sample typed input struct for DefineTool tests.
 type weatherInput struct {
-	Location string `json:"location" description:"City and state"`
+	Location string  `json:"location" description:"City and state"`
 	Unit     string  `json:"unit,omitempty" description:"Temperature unit" enum:"celsius,fahrenheit"`
 	MaxTemp  float64 `json:"maxTemp,omitempty" description:"Maximum temperature threshold"`
 	Verbose  bool    `json:"verbose" description:"Include extra details"`
