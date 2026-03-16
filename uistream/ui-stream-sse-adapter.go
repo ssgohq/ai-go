@@ -28,6 +28,7 @@ type ToolResultHook func(wr *Writer, result ToolResult)
 type Adapter struct {
 	msgID          string
 	toolResultHook ToolResultHook
+	onFinish       func(text string, finishReason string)
 }
 
 // NewAdapter creates an Adapter with a fixed message ID.
@@ -40,6 +41,14 @@ func NewAdapter(msgID string) *Adapter {
 // wrapping the internal event channel.
 func (a *Adapter) WithToolResultHook(hook ToolResultHook) *Adapter {
 	a.toolResultHook = hook
+	return a
+}
+
+// WithOnFinish sets a callback invoked after the stream completes.
+// text is the full accumulated assistant text; finishReason is "stop" or the
+// finish reason captured from the last finish chunk.
+func (a *Adapter) WithOnFinish(fn func(text string, finishReason string)) *Adapter {
+	a.onFinish = fn
 	return a
 }
 
@@ -92,9 +101,13 @@ func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
 	cs := producer.Produce(producerCh)
 	wr := NewWriter(w)
 
+	var lastFinishReason string
 	for c := range cs.Chunks {
 		switch c.Type {
 		case ChunkFinish:
+			if reason, ok := c.Fields["finishReason"].(string); ok {
+				lastFinishReason = reason
+			}
 			wr.WriteFinish()
 		case ChunkError:
 			msg, ok := c.Fields["errorText"].(string)
@@ -122,5 +135,11 @@ func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
 		}
 	}
 
-	return cs.FullText()
+	text := cs.FullText()
+
+	if a.onFinish != nil {
+		a.onFinish(text, lastFinishReason)
+	}
+
+	return text
 }

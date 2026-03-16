@@ -23,4 +23,17 @@ const (
 	// Source chunks for web search results and citations.
 	ChunkSource  = "source"
 	ChunkSources = "sources"
+
+	// ChunkMessageMetadata is attached to the assistant message being built.
+	ChunkMessageMetadata = "message-metadata"
+
+	// ChunkAbort signals stream cancellation.
+	ChunkAbort = "abort"
+
+	// Structured source types.
+	ChunkSourceURL      = "source-url"
+	ChunkSourceDocument = "source-document"
+
+	// ChunkFile is an assistant-emitted file reference.
+	ChunkFile = "file"
 )

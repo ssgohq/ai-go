@@ -36,12 +36,28 @@ type ChatRequestEnvelope struct {
 // Role is one of: "user", "assistant", "system".
 // Parts carry the actual content; for simple text messages a single TextEnvelopePart suffices.
 type EnvelopeMessage struct {
+	// ID is the message identifier, used for continuation (resuming an existing assistant message).
+	ID    string              `json:"id,omitempty"`
 	Role  string              `json:"role"`
 	Parts []EnvelopePartUnion `json:"parts,omitempty"`
 
 	// Content is the flat string shorthand for a single-text-part message.
 	// If Parts is non-empty, Content is ignored.
 	Content string `json:"content,omitempty"`
+}
+
+// ResolveMessageID returns the ID of the last assistant message for continuation,
+// or the fallback ID if no continuation is applicable.
+// This supports message continuation when the last message is from the assistant.
+func ResolveMessageID(messages []EnvelopeMessage, fallback string) string {
+	if len(messages) == 0 {
+		return fallback
+	}
+	last := messages[len(messages)-1]
+	if last.Role == "assistant" && last.ID != "" {
+		return last.ID
+	}
+	return fallback
 }
 
 // EnvelopePartType identifies the kind of content in an EnvelopePart.

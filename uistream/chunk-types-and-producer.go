@@ -41,6 +41,9 @@ type ChunkProducer struct {
 	reasoningStarted bool
 	toolInputStarted map[string]bool
 	toolArgsAccum    map[string]string
+
+	// lastFinishReason stores the finish reason from the most recent StepEventStepEnd.
+	lastFinishReason string
 }
 
 // NewChunkProducer creates a ChunkProducer with the given message ID.
@@ -108,10 +111,15 @@ func (cp *ChunkProducer) translateEvent(ev engine.StepEvent) ([]Chunk, string) {
 	case engine.StepEventToolResult:
 		return cp.chunksToolResult(ev), ""
 	case engine.StepEventStepEnd:
+		cp.lastFinishReason = string(ev.FinishReason)
 		return cp.chunksStepEnd(), ""
 	case engine.StepEventDone:
+		fields := map[string]any{}
+		if cp.lastFinishReason != "" {
+			fields["finishReason"] = cp.lastFinishReason
+		}
 		return []Chunk{
-			{Type: ChunkFinish, Fields: nil},
+			{Type: ChunkFinish, Fields: fields},
 		}, ""
 	}
 	return nil, ""
