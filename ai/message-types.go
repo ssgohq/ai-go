@@ -33,6 +33,10 @@ const (
 	ContentPartTypeReasoning ContentPartType = "reasoning"
 )
 
+// ContentPartTypeImage is an alias for ContentPartTypeImageURL.
+// New code should prefer ContentPartTypeImage; both values are identical.
+const ContentPartTypeImage = ContentPartTypeImageURL
+
 // ContentPart is a single part of a message (text, image, file, tool call/result, or reasoning).
 // Only the fields matching the active Type are populated; all others are zero.
 type ContentPart struct {
@@ -47,8 +51,17 @@ type ContentPart struct {
 
 	// FileURL is the URL or data URI when Type == ContentPartTypeFile.
 	FileURL string
-	// MimeType is the MIME type of the file when Type == ContentPartTypeFile.
+	// MimeType is the MIME type for image or file parts.
 	MimeType string
+
+	// Data holds inline binary content for image or file parts.
+	// Exactly one of ImageURL/FileURL, Data, or FileID should be set per part.
+	Data []byte
+	// FileID is a provider-specific file identifier (e.g. OpenAI "file-abc123").
+	// Exactly one of ImageURL/FileURL, Data, or FileID should be set per part.
+	FileID string
+	// Filename is the original filename for file parts (optional, used with Data or FileID).
+	Filename string
 
 	// ToolCallID is the unique ID for the tool call when Type == ContentPartTypeToolCall.
 	ToolCallID string
@@ -80,9 +93,59 @@ func ImageURLPart(url string) ContentPart {
 	return ContentPart{Type: ContentPartTypeImageURL, ImageURL: url}
 }
 
-// FilePart constructs a file ContentPart.
+// FilePart constructs a file ContentPart from a URL or data URI.
 func FilePart(url, mimeType string) ContentPart {
 	return ContentPart{Type: ContentPartTypeFile, FileURL: url, MimeType: mimeType}
+}
+
+// ImageDataPart constructs an image ContentPart from inline binary data.
+// Use this when you have raw image bytes in memory (e.g. read from disk or
+// received over the network) and want to send the image inline to the model.
+// The mimeType must be a valid image MIME type such as "image/png" or "image/jpeg".
+//
+// Example:
+//
+//	data, _ := os.ReadFile("screenshot.png")
+//	part := ai.ImageDataPart(data, "image/png")
+func ImageDataPart(data []byte, mimeType string) ContentPart {
+	return ContentPart{Type: ContentPartTypeImage, Data: data, MimeType: mimeType}
+}
+
+// ImageFileIDPart constructs an image ContentPart referencing a provider-hosted file.
+// Use this when the image has already been uploaded to the provider (e.g. via the
+// OpenAI Files API) and you have a file ID such as "file-abc123". Sending a file ID
+// avoids re-uploading the binary on every request.
+//
+// Example:
+//
+//	part := ai.ImageFileIDPart("file-abc123")
+func ImageFileIDPart(fileID string) ContentPart {
+	return ContentPart{Type: ContentPartTypeImage, FileID: fileID}
+}
+
+// FileDataPart constructs a file ContentPart from inline binary data.
+// Use this when you have raw file bytes in memory and want to send the file
+// inline to the model (e.g. a PDF document for summarisation). The filename
+// parameter is forwarded to the provider and may appear in citations or logs.
+//
+// Example:
+//
+//	data, _ := os.ReadFile("report.pdf")
+//	part := ai.FileDataPart(data, "application/pdf", "report.pdf")
+func FileDataPart(data []byte, mimeType, filename string) ContentPart {
+	return ContentPart{Type: ContentPartTypeFile, Data: data, MimeType: mimeType, Filename: filename}
+}
+
+// FileIDPart constructs a file ContentPart referencing a provider-hosted file.
+// Use this when a non-image file has already been uploaded to the provider
+// (e.g. via the OpenAI Files API) and you have a file ID such as "file-xyz".
+// The mimeType hints to the provider how the file should be interpreted.
+//
+// Example:
+//
+//	part := ai.FileIDPart("file-xyz", "application/pdf")
+func FileIDPart(fileID, mimeType string) ContentPart {
+	return ContentPart{Type: ContentPartTypeFile, FileID: fileID, MimeType: mimeType}
 }
 
 // ReasoningPart constructs a reasoning ContentPart for history replay.

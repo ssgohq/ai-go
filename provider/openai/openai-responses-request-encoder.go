@@ -1,8 +1,8 @@
 package openai
 
 import (
+	"encoding/base64"
 	"fmt"
-	"strings"
 
 	"github.com/open-ai-sdk/ai-go/ai"
 )
@@ -68,6 +68,7 @@ type inputPart struct {
 	ImageURL string `json:"image_url,omitempty"`
 	FileID   string `json:"file_id,omitempty"`
 	FileURL  string `json:"file_url,omitempty"`
+	Filename string `json:"filename,omitempty"`
 }
 
 // responsesTool describes a tool available to the model.
@@ -203,21 +204,33 @@ func encodeUserMessage(m ai.Message) ([]inputItem, []ai.Warning, error) {
 			parts = append(parts, inputPart{Type: "input_text", Text: p.Text})
 
 		case ai.ContentPartTypeImageURL:
-			url := p.ImageURL
-			if strings.HasPrefix(url, "file-") {
-				// Treat as OpenAI file ID.
-				parts = append(parts, inputPart{Type: "input_image", FileID: url})
-			} else {
-				parts = append(parts, inputPart{Type: "input_image", ImageURL: url})
+			switch {
+			case p.FileID != "":
+				parts = append(parts, inputPart{Type: "input_image", FileID: p.FileID})
+			case len(p.Data) > 0:
+				mimeType := p.MimeType
+				if mimeType == "" {
+					mimeType = "image/png"
+				}
+				dataURI := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
+				parts = append(parts, inputPart{Type: "input_image", ImageURL: dataURI})
+			default:
+				parts = append(parts, inputPart{Type: "input_image", ImageURL: p.ImageURL})
 			}
 
 		case ai.ContentPartTypeFile:
-			url := p.FileURL
-			if strings.HasPrefix(url, "file-") {
-				// OpenAI file ID.
-				parts = append(parts, inputPart{Type: "input_file", FileID: url})
-			} else {
-				parts = append(parts, inputPart{Type: "input_file", FileURL: url})
+			switch {
+			case p.FileID != "":
+				parts = append(parts, inputPart{Type: "input_file", FileID: p.FileID, Filename: p.Filename})
+			case len(p.Data) > 0:
+				mimeType := p.MimeType
+				if mimeType == "" {
+					mimeType = "application/octet-stream"
+				}
+				dataURI := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
+				parts = append(parts, inputPart{Type: "input_file", FileURL: dataURI, Filename: p.Filename})
+			default:
+				parts = append(parts, inputPart{Type: "input_file", FileURL: p.FileURL, Filename: p.Filename})
 			}
 
 		default:

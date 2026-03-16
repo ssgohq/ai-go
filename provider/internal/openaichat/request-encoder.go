@@ -1,8 +1,8 @@
 package openaichat
 
 import (
+	"encoding/base64"
 	"fmt"
-	"strings"
 
 	"github.com/open-ai-sdk/ai-go/ai"
 )
@@ -146,21 +146,39 @@ func encodeContentMessage(m ai.Message) (map[string]any, error) {
 		case ai.ContentPartTypeText:
 			parts = append(parts, map[string]any{"type": "text", "text": part.Text})
 		case ai.ContentPartTypeImageURL:
+			var imageURL string
+			switch {
+			case len(part.Data) > 0:
+				mimeType := part.MimeType
+				if mimeType == "" {
+					mimeType = "image/png"
+				}
+				imageURL = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(part.Data)
+			default:
+				imageURL = part.ImageURL
+			}
 			parts = append(parts, map[string]any{
 				"type":      "image_url",
-				"image_url": map[string]string{"url": part.ImageURL},
+				"image_url": map[string]string{"url": imageURL},
 			})
 		case ai.ContentPartTypeFile:
-			url := part.FileURL
-			if strings.HasPrefix(url, "data:") {
+			// Chat completions API does not support file IDs or binary uploads natively.
+			// Encode inline data as a data: URI stub or fall back to URL text.
+			switch {
+			case len(part.Data) > 0:
+				mimeType := part.MimeType
+				if mimeType == "" {
+					mimeType = "application/octet-stream"
+				}
+				dataURI := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(part.Data)
 				parts = append(parts, map[string]any{
 					"type": "text",
-					"text": fmt.Sprintf("[file: %s]", part.MimeType),
+					"text": fmt.Sprintf("[file: %s]", dataURI),
 				})
-			} else {
+			default:
 				parts = append(parts, map[string]any{
 					"type": "text",
-					"text": fmt.Sprintf("[file url: %s]", url),
+					"text": fmt.Sprintf("[file url: %s]", part.FileURL),
 				})
 			}
 		case ai.ContentPartTypeToolCall:

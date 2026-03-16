@@ -23,17 +23,34 @@ func ToAIMessages(msgs []EnvelopeMessage) []ai.Message {
 }
 
 // ToAIContentParts converts a slice of EnvelopePartUnion to ai.ContentPart values.
+// Priority for image/file parts: FileID > Data > URL.
 func ToAIContentParts(parts []EnvelopePartUnion) []ai.ContentPart {
-	result := make([]ai.ContentPart, 0, len(parts))
+	out := make([]ai.ContentPart, 0, len(parts))
 	for _, p := range parts {
 		switch p.Type {
 		case EnvelopePartTypeText:
-			result = append(result, ai.TextPart(p.Text))
+			out = append(out, ai.TextPart(p.Text))
 		case EnvelopePartTypeImage:
-			result = append(result, ai.ImageURLPart(p.URL))
+			switch {
+			case p.FileID != "":
+				out = append(out, ai.ImageFileIDPart(p.FileID))
+			case len(p.Data) > 0:
+				out = append(out, ai.ImageDataPart(p.Data, p.MediaType))
+			default:
+				out = append(out, ai.ImageURLPart(p.URL))
+			}
 		case EnvelopePartTypeFile:
-			result = append(result, ai.FilePart(p.URL, p.MediaType))
+			switch {
+			case p.FileID != "":
+				out = append(out, ai.FileIDPart(p.FileID, p.MediaType))
+			case len(p.Data) > 0:
+				out = append(out, ai.FileDataPart(p.Data, p.MediaType, p.Name))
+			default:
+				cp := ai.FilePart(p.URL, p.MediaType)
+				cp.Filename = p.Name
+				out = append(out, cp)
+			}
 		}
 	}
-	return result
+	return out
 }

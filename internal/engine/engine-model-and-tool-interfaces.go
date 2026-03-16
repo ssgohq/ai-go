@@ -48,6 +48,11 @@ type ContentPart struct {
 	FileURL  string
 	MimeType string
 
+	// Shared multimodal fields (image_url and file parts).
+	Data     []byte // Inline binary content.
+	FileID   string // Provider-specific file identifier.
+	Filename string // Original filename (file parts).
+
 	// tool_call
 	ToolCallID       string
 	ToolCallName     string
