@@ -38,73 +38,21 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 			return
 		}
 
-		var fullText string
-		var lastFinish FinishReason
-		var lastRawFinish string
-		var lastProviderMeta map[string]any
-		var pendingWarnings []Warning
 		acc := newToolCallAccumulator()
-
-		for ev := range eventCh {
-			switch ev.Type {
-			case StreamEventTextDelta:
-				fullText += ev.TextDelta
-				out <- StepEvent{Type: StepEventTextDelta, TextDelta: ev.TextDelta}
-
-			case StreamEventReasoningDelta:
-				out <- StepEvent{Type: StepEventReasoningDelta, ReasoningDelta: ev.TextDelta}
-
-			case StreamEventToolCallDelta:
-				isNew := acc.add(ev)
-				if isNew {
-					out <- StepEvent{
-						Type:              StepEventToolCallStart,
-						ToolCallIndex:     ev.ToolCallIndex,
-						ToolCallID:        ev.ToolCallID,
-						ToolCallName:      ev.ToolCallName,
-						ToolCallArgsDelta: ev.ToolCallArgsDelta,
-						ThoughtSignature:  ev.ThoughtSignature,
-					}
-				} else if ev.ToolCallArgsDelta != "" {
-					out <- StepEvent{
-						Type:              StepEventToolCallDelta,
-						ToolCallIndex:     ev.ToolCallIndex,
-						ToolCallID:        ev.ToolCallID,
-						ToolCallArgsDelta: ev.ToolCallArgsDelta,
-					}
-				}
-
-			case StreamEventUsage:
-				out <- StepEvent{Type: StepEventUsage, Usage: ev.Usage}
-
-			case StreamEventSource:
-				if ev.Source != nil {
-					out <- StepEvent{Type: StepEventSource, Source: ev.Source}
-				}
-
-			case StreamEventFinish:
-				lastFinish = ev.FinishReason
-				// Propagate finish metadata to step end later (stored temporarily).
-				lastRawFinish = ev.RawFinishReason
-				lastProviderMeta = ev.ProviderMetadata
-				if len(ev.Warnings) > 0 {
-					pendingWarnings = append(pendingWarnings, ev.Warnings...)
-				}
-
-			case StreamEventError:
-				out <- StepEvent{Type: StepEventError, Error: ev.Error}
-				return
-			}
+		sr, fatalErr := consumeStream(eventCh, out, acc)
+		if fatalErr {
+			return
 		}
+		fullText := sr.text
 
 		if !acc.hasToolCalls() {
 			out <- StepEvent{
 				Type:             StepEventStepEnd,
 				StepNumber:       step,
-				FinishReason:     lastFinish,
-				RawFinishReason:  lastRawFinish,
-				ProviderMetadata: lastProviderMeta,
-				Warnings:         pendingWarnings,
+				FinishReason:     sr.finish,
+				RawFinishReason:  sr.rawFinish,
+				ProviderMetadata: sr.providerMeta,
+				Warnings:         sr.warnings,
 			}
 			emitStructuredOutput(ctx, out, params, history)
 			out <- StepEvent{Type: StepEventDone}
@@ -127,19 +75,15 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		out <- StepEvent{
 			Type:             StepEventStepEnd,
 			StepNumber:       step,
-			FinishReason:     lastFinish,
-			RawFinishReason:  lastRawFinish,
-			ProviderMetadata: lastProviderMeta,
-			Warnings:         pendingWarnings,
+			FinishReason:     sr.finish,
+			RawFinishReason:  sr.rawFinish,
+			ProviderMetadata: sr.providerMeta,
+			Warnings:         sr.warnings,
 		}
-		// Reset per-step accumulators.
-		lastRawFinish = ""
-		lastProviderMeta = nil
-		pendingWarnings = nil
 
 		if params.StopWhen != nil {
-			sr := &StepResult{HasToolCalls: true, ToolNames: toolNames, Text: fullText}
-			if params.StopWhen(step+1, sr) {
+			stopResult := &StepResult{HasToolCalls: true, ToolNames: toolNames, Text: fullText}
+			if params.StopWhen(step+1, stopResult) {
 				emitStructuredOutput(ctx, out, params, history)
 				out <- StepEvent{Type: StepEventDone}
 				return
@@ -147,8 +91,118 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		}
 	}
 
+	// maxSteps exhausted after tool calls — run one final generation so the model
+	// can produce a text response that incorporates the tool results.
+	if ok := emitFinalGeneration(ctx, out, params, history, maxSteps); !ok {
+		return
+	}
+
 	emitStructuredOutput(ctx, out, params, history)
 	out <- StepEvent{Type: StepEventDone}
+}
+
+// streamResult holds accumulated metadata from consuming a model stream.
+type streamResult struct {
+	text         string
+	finish       FinishReason
+	rawFinish    string
+	providerMeta map[string]any
+	warnings     []Warning
+}
+
+// consumeStream reads all events from a model stream, forwards them to the step
+// event channel, and accumulates tool calls via acc (may be nil for text-only calls).
+// Returns the accumulated result and true if a fatal error was emitted.
+func consumeStream(eventCh <-chan StreamEvent, out chan<- StepEvent, acc *toolCallAccumulator) (streamResult, bool) {
+	var sr streamResult
+	for ev := range eventCh {
+		switch ev.Type {
+		case StreamEventTextDelta:
+			sr.text += ev.TextDelta
+			out <- StepEvent{Type: StepEventTextDelta, TextDelta: ev.TextDelta}
+
+		case StreamEventReasoningDelta:
+			out <- StepEvent{Type: StepEventReasoningDelta, ReasoningDelta: ev.TextDelta}
+
+		case StreamEventToolCallDelta:
+			if acc != nil {
+				isNew := acc.add(ev)
+				if isNew {
+					out <- StepEvent{
+						Type:              StepEventToolCallStart,
+						ToolCallIndex:     ev.ToolCallIndex,
+						ToolCallID:        ev.ToolCallID,
+						ToolCallName:      ev.ToolCallName,
+						ToolCallArgsDelta: ev.ToolCallArgsDelta,
+						ThoughtSignature:  ev.ThoughtSignature,
+					}
+				} else if ev.ToolCallArgsDelta != "" {
+					out <- StepEvent{
+						Type:              StepEventToolCallDelta,
+						ToolCallIndex:     ev.ToolCallIndex,
+						ToolCallID:        ev.ToolCallID,
+						ToolCallArgsDelta: ev.ToolCallArgsDelta,
+					}
+				}
+			}
+
+		case StreamEventUsage:
+			out <- StepEvent{Type: StepEventUsage, Usage: ev.Usage}
+
+		case StreamEventSource:
+			if ev.Source != nil {
+				out <- StepEvent{Type: StepEventSource, Source: ev.Source}
+			}
+
+		case StreamEventFinish:
+			sr.finish = ev.FinishReason
+			sr.rawFinish = ev.RawFinishReason
+			sr.providerMeta = ev.ProviderMetadata
+			if len(ev.Warnings) > 0 {
+				sr.warnings = append(sr.warnings, ev.Warnings...)
+			}
+
+		case StreamEventError:
+			out <- StepEvent{Type: StepEventError, Error: ev.Error}
+			return sr, true
+		}
+	}
+	return sr, false
+}
+
+// emitFinalGeneration runs a tool-free generation after maxSteps are exhausted so the
+// model produces a text response incorporating earlier tool results. Returns false if
+// a fatal error was emitted and the caller should return immediately.
+func emitFinalGeneration(
+	ctx context.Context,
+	out chan<- StepEvent,
+	params RunParams,
+	history []Message,
+	stepNum int,
+) bool {
+	out <- StepEvent{Type: StepEventStepStart, StepNumber: stepNum}
+
+	// Strip tools so the model is forced to produce text, not more tool calls.
+	eventCh, err := params.Model.Stream(ctx, Request{Messages: history})
+	if err != nil {
+		out <- StepEvent{Type: StepEventError, Error: fmt.Errorf("final step: start stream: %w", err)}
+		return false
+	}
+
+	sr, fatalErr := consumeStream(eventCh, out, nil)
+	if fatalErr {
+		return false
+	}
+
+	out <- StepEvent{
+		Type:             StepEventStepEnd,
+		StepNumber:       stepNum,
+		FinishReason:     sr.finish,
+		RawFinishReason:  sr.rawFinish,
+		ProviderMetadata: sr.providerMeta,
+		Warnings:         sr.warnings,
+	}
+	return true
 }
 
 func executeToolCall(ctx context.Context, tools *ToolSet, tc toolCallState) *ToolResult {
