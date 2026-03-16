@@ -41,6 +41,10 @@ func StreamToWriter(sr *ai.StreamResult, w io.Writer, msgID string, opts ...UISt
 		o(cfg)
 	}
 
+	// Drain textCh and consumeCh so the fan-out goroutine doesn't deadlock.
+	// StreamToWriter only consumes Events().
+	sr.DrainUnused()
+
 	adapter := NewAdapter(msgID)
 
 	if cfg.toolResultHook != nil {

@@ -61,6 +61,20 @@ func (sr *StreamResult) Events() <-chan engine.StepEvent {
 	return sr.eventsCh
 }
 
+// DrainUnused starts goroutines to consume channels that won't be read.
+// Call this when only Events() is being consumed (e.g. from StreamToWriter)
+// to prevent the fan-out goroutine from deadlocking on full buffers.
+func (sr *StreamResult) DrainUnused() {
+	go func() {
+		for range sr.textCh {
+		}
+	}()
+	go func() {
+		for range sr.consumeCh {
+		}
+	}()
+}
+
 // Consume blocks until the stream completes and returns the aggregated result.
 // It reads from its own internal channel so it does not interfere with
 // TextStream or Events consumers.
