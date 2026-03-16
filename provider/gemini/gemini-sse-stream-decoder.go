@@ -40,9 +40,15 @@ func deduplicatedSourceExtractor(seen map[string]bool) func(openaichat.StreamChu
 			if !ok {
 				continue
 			}
-			uri, _ := web["uri"].(string)
-			title, _ := web["title"].(string)
-			if uri == "" || seen[uri] {
+			uri, ok := web["uri"].(string)
+			if !ok || uri == "" {
+				continue
+			}
+			var title string
+			if t, ok := web["title"].(string); ok {
+				title = t
+			}
+			if seen[uri] {
 				continue
 			}
 			seen[uri] = true
