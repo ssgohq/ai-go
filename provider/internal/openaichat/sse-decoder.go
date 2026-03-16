@@ -39,6 +39,8 @@ type StreamChunk struct {
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
+	// ProviderMetadata holds provider-specific metadata from the response (e.g. Gemini groundingMetadata).
+	ProviderMetadata map[string]any `json:"provider_metadata,omitempty"`
 }
 
 // SSEDecodeParams holds configuration for DecodeSSEStream.
@@ -47,6 +49,9 @@ type SSEDecodeParams struct {
 	ProviderName string
 	// MetadataExtractor is an optional hook to populate ProviderMetadata on finish events.
 	MetadataExtractor func(chunk StreamChunk) map[string]any
+	// SourceExtractor is an optional hook to extract ai.Source events from a chunk.
+	// Called for every chunk; returned sources are emitted before text/tool deltas.
+	SourceExtractor func(chunk StreamChunk) []ai.Source
 }
 
 // DecodeSSEStream reads SSE lines from body and emits normalized ai.StreamEvents onto ch.
@@ -100,7 +105,7 @@ func DecodeSSEStream(
 			return
 		}
 
-		emitChunkEvents(chunk, ch, params.MetadataExtractor)
+		emitChunkEvents(chunk, ch, params.MetadataExtractor, params.SourceExtractor)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -115,6 +120,7 @@ func emitChunkEvents(
 	chunk StreamChunk,
 	ch chan<- ai.StreamEvent,
 	metaExtractor func(StreamChunk) map[string]any,
+	sourceExtractor func(StreamChunk) []ai.Source,
 ) {
 	// Emit usage when present (may arrive on a chunk with empty choices).
 	if chunk.Usage != nil {
@@ -125,6 +131,14 @@ func emitChunkEvents(
 				CompletionTokens: chunk.Usage.CompletionTokens,
 				TotalTokens:      chunk.Usage.TotalTokens,
 			},
+		}
+	}
+
+	// Emit sources extracted from this chunk (e.g. Gemini grounding chunks).
+	if sourceExtractor != nil {
+		for _, src := range sourceExtractor(chunk) {
+			s := src // copy for pointer safety
+			ch <- ai.StreamEvent{Type: ai.StreamEventSource, Source: &s}
 		}
 	}
 
