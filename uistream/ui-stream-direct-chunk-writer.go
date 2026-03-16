@@ -1,8 +1,6 @@
 package uistream
 
 import (
-	"encoding/json"
-	"fmt"
 	"io"
 )
 
@@ -19,40 +17,33 @@ func NewWriter(w io.Writer) *Writer {
 }
 
 // WriteChunk emits a single named chunk with arbitrary key/value fields.
-// The type field is always overwritten to match the chunk name.
+// The type field is always set to typ.
 func (wr *Writer) WriteChunk(typ string, fields map[string]any) {
-	payload := make(map[string]any, len(fields)+1)
-	for k, v := range fields {
-		payload[k] = v
-	}
-	payload["type"] = typ
-	wr.writeSSE(payload)
+	WriteSSE(wr.w, Chunk{Type: typ, Fields: fields})
 }
 
 // WriteStart emits the stream start chunk with a message ID.
 func (wr *Writer) WriteStart(msgID string) {
-	wr.writeSSE(map[string]any{"type": ChunkStart, "messageId": msgID})
+	WriteSSE(wr.w, Chunk{Type: ChunkStart, Fields: map[string]any{"messageId": msgID}})
 }
 
-// WriteFinish emits the stream finish chunk.
+// WriteFinish emits the stream finish chunk followed by the [DONE] terminator.
 func (wr *Writer) WriteFinish() {
-	wr.writeSSE(map[string]any{"type": ChunkFinish})
-	fmt.Fprintf(wr.w, "data: [DONE]\n\n")
+	// WriteSSE already emits [DONE] for ChunkFinish — but only once. We call it
+	// directly here to keep the same output as before.
+	WriteSSE(wr.w, Chunk{Type: ChunkFinish, Fields: nil})
 }
 
 // WriteError emits an error chunk with an error message.
 func (wr *Writer) WriteError(msg string) {
-	wr.writeSSE(map[string]any{"type": ChunkError, "errorText": msg})
+	WriteSSE(wr.w, Chunk{Type: ChunkError, Fields: map[string]any{"errorText": msg}})
 }
 
 // WriteData emits a custom data-* chunk.
 // name is appended to "data-" to form the chunk type (e.g. name="plan" → type="data-plan").
 // payload is JSON-serialized under the "data" key.
 func (wr *Writer) WriteData(name string, payload any) {
-	wr.writeSSE(map[string]any{
-		"type": "data-" + name,
-		"data": payload,
-	})
+	WriteSSE(wr.w, Chunk{Type: "data-" + name, Fields: map[string]any{"data": payload}})
 }
 
 // Source is a URL reference emitted as part of a source chunk.
@@ -64,26 +55,14 @@ type Source struct {
 
 // WriteSource emits a source chunk for a single web reference.
 func (wr *Writer) WriteSource(s Source) {
-	wr.writeSSE(map[string]any{
-		"type":  ChunkSource,
+	WriteSSE(wr.w, Chunk{Type: ChunkSource, Fields: map[string]any{
 		"id":    s.ID,
 		"url":   s.URL,
 		"title": s.Title,
-	})
+	}})
 }
 
-// WriteSources emits a source chunk containing multiple references.
+// WriteSources emits a sources chunk containing multiple references.
 func (wr *Writer) WriteSources(sources []Source) {
-	wr.writeSSE(map[string]any{
-		"type":    ChunkSources,
-		"sources": sources,
-	})
-}
-
-func (wr *Writer) writeSSE(payload map[string]any) {
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	fmt.Fprintf(wr.w, "data: %s\n\n", b)
+	WriteSSE(wr.w, Chunk{Type: ChunkSources, Fields: map[string]any{"sources": sources}})
 }
