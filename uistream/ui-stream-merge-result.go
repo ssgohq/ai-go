@@ -90,13 +90,9 @@ func (wr *Writer) MergeStreamResult(sr StreamEventer, opts ...MergeOption) strin
 
 	cs := producer.Produce(producerCh)
 
-	var lastFinishReason string
 	for c := range cs.Chunks {
 		switch c.Type {
 		case ChunkFinish:
-			if reason, ok := c.Fields["finishReason"].(string); ok {
-				lastFinishReason = reason
-			}
 			// Do NOT emit finish here; caller manages lifecycle.
 		case ChunkStart:
 			// Skip the start chunk emitted by the producer; caller owns lifecycle.
@@ -131,7 +127,6 @@ func (wr *Writer) MergeStreamResult(sr StreamEventer, opts ...MergeOption) strin
 		cfg.onFinish(text)
 	}
 
-	_ = lastFinishReason // available for future use via MergeOption
 	return text
 }
 
