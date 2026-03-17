@@ -26,6 +26,18 @@ type GenerateTextRequest struct {
 	// ProviderOptions carries provider-specific options keyed by provider name.
 	// Example: map[string]any{"openai": map[string]any{"previousResponseId": "r_abc"}}.
 	ProviderOptions map[string]any
+	// PrepareStep is called before each tool-loop step to allow per-step overrides.
+	PrepareStep PrepareStepFunc
+	// ActiveTools filters the tool set to only these tool names. Nil means all tools.
+	ActiveTools []string
+	// OnStepFinish is called after each step completes.
+	OnStepFinish func(StepFinishEvent)
+	// OnFinish is called when the entire run completes.
+	OnFinish func(FinishEvent)
+	// OnChunk is called for every engine event during streaming.
+	OnChunk func(ChunkEvent)
+	// OnError is called when an error occurs during the run.
+	OnError func(error)
 }
 
 // StepOutput holds the result of a single tool-loop step.
@@ -62,4 +74,64 @@ type GenerateTextResult struct {
 	Warnings         []Warning
 	Sources          []Source
 	StructuredOutput json.RawMessage
+}
+
+// PrepareStepContext provides information about the current step for the PrepareStep callback.
+type PrepareStepContext struct {
+	StepNumber int
+	Steps      []PrepareStepInfo
+}
+
+// PrepareStepInfo holds information about a completed step for PrepareStep evaluation.
+type PrepareStepInfo struct {
+	StepNumber   int
+	HasToolCalls bool
+	ToolNames    []string
+	Text         string
+	FinishReason FinishReason
+}
+
+// PrepareStepResult holds per-step overrides returned by PrepareStep.
+type PrepareStepResult struct {
+	Model           LanguageModel
+	ToolChoice      *ToolChoice
+	ActiveTools     []string
+	System          string
+	ProviderOptions map[string]any
+}
+
+// PrepareStepFunc is called before each step to allow per-step configuration overrides.
+type PrepareStepFunc func(ctx PrepareStepContext) *PrepareStepResult
+
+// StepFinishEvent is passed to the OnStepFinish callback after each step.
+type StepFinishEvent struct {
+	StepNumber       int
+	ToolCalls        []ToolCallOutput
+	ToolResults      []ToolResult
+	FinishReason     FinishReason
+	Usage            *Usage
+	ProviderMetadata map[string]any
+	Warnings         []Warning
+}
+
+// FinishEvent is passed to the OnFinish callback when the entire run completes.
+type FinishEvent struct {
+	Text             string
+	Reasoning        string
+	Steps            []StepOutput
+	TotalUsage       Usage
+	FinishReason     FinishReason
+	ProviderMetadata map[string]any
+}
+
+// ChunkEvent wraps a streaming engine event for the OnChunk callback.
+type ChunkEvent struct {
+	Type              string
+	TextDelta         string
+	ReasoningDelta    string
+	ToolCallID        string
+	ToolCallName      string
+	ToolCallArgsDelta string
+	StepNumber        int
+	FinishReason      FinishReason
 }

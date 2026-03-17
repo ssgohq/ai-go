@@ -16,9 +16,10 @@ type ToolExecutor interface {
 
 // ToolDefinition describes a tool available to the model.
 type ToolDefinition struct {
-	Name        string
-	Description string
-	InputSchema map[string]any
+	Name          string
+	Description   string
+	InputSchema   map[string]any
+	ToModelOutput func(result string) string
 }
 
 // ToolSet is a collection of tool definitions and an executor.
@@ -110,11 +111,77 @@ type StepResult struct {
 	Text         string
 }
 
+// PrepareStepContext provides information about the current step for the PrepareStep callback.
+type PrepareStepContext struct {
+	StepNumber int
+	Steps      []StepResultInfo
+}
+
+// StepResultInfo holds information about a completed step for PrepareStep evaluation.
+type StepResultInfo struct {
+	StepNumber   int
+	HasToolCalls bool
+	ToolNames    []string
+	Text         string
+	FinishReason FinishReason
+}
+
+// PrepareStepResult holds per-step overrides returned by PrepareStep.
+// Nil fields mean "no override" — use the base request value.
+type PrepareStepResult struct {
+	Model           Model
+	ToolChoice      *ToolChoice
+	ActiveTools     []string
+	System          string
+	ProviderOptions map[string]any
+}
+
+// PrepareStepFunc is called before each step to allow per-step configuration overrides.
+type PrepareStepFunc func(ctx PrepareStepContext) *PrepareStepResult
+
+// LifecycleCallbacks holds optional callbacks for observability during a run.
+type LifecycleCallbacks struct {
+	OnStepFinish func(event StepFinishEvent)
+	OnFinish     func(event FinishEvent)
+	OnChunk      func(event StepEvent)
+	OnError      func(err error)
+}
+
+// StepFinishEvent holds data passed to OnStepFinish after each step.
+type StepFinishEvent struct {
+	StepNumber       int
+	ToolCalls        []ToolCallInfo
+	ToolResults      []ToolResult
+	FinishReason     FinishReason
+	Usage            *Usage
+	ProviderMetadata map[string]any
+	Warnings         []Warning
+}
+
+// FinishEvent holds data passed to OnFinish when the entire run completes.
+type FinishEvent struct {
+	Text             string
+	Reasoning        string
+	Steps            []StepResultInfo
+	TotalUsage       Usage
+	FinishReason     FinishReason
+	ProviderMetadata map[string]any
+}
+
+// ToolCallInfo describes a tool call for lifecycle callbacks.
+type ToolCallInfo struct {
+	ID   string
+	Name string
+	Args string
+}
+
 // RunParams configures a single engine run.
 type RunParams struct {
-	Model    Model
-	Request  Request
-	Tools    *ToolSet
-	StopWhen StopCondition
-	MaxSteps int
+	Model       Model
+	Request     Request
+	Tools       *ToolSet
+	StopWhen    StopCondition
+	MaxSteps    int
+	PrepareStep PrepareStepFunc
+	Callbacks   *LifecycleCallbacks
 }

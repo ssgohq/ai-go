@@ -16,8 +16,9 @@ type StreamResult struct {
 	consumeCh chan engine.StepEvent
 
 	// done is closed when the fan-out goroutine has finished.
-	done      chan struct{}
-	drainOnce sync.Once
+	done        chan struct{}
+	drainOnce   sync.Once
+	consumeOnce sync.Once
 }
 
 // NewStreamResult wraps an engine step-event channel in a StreamResult.
@@ -76,6 +77,31 @@ func (sr *StreamResult) DrainUnused() {
 	sr.drainOnce.Do(func() {
 		go func() {
 			for range sr.textCh {
+			}
+		}()
+		go func() {
+			for range sr.consumeCh {
+			}
+		}()
+	})
+}
+
+// ConsumeStream drains all output channels for fire-and-forget usage.
+// Call this when you want the stream to run to completion without reading
+// any output — e.g. when side effects are handled via callbacks or merge.
+//
+// Unlike DrainUnused (which preserves Events() for reading), ConsumeStream
+// drains everything including the events channel.
+//
+// Must not be combined with DrainUnused or direct channel reads.
+func (sr *StreamResult) ConsumeStream() {
+	sr.consumeOnce.Do(func() {
+		go func() {
+			for range sr.textCh {
+			}
+		}()
+		go func() {
+			for range sr.eventsCh {
 			}
 		}()
 		go func() {

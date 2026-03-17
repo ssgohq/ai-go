@@ -11,6 +11,10 @@ type ToolDefinition struct {
 	// InputSchema is a JSON Schema object describing the tool's input parameters.
 	// Use the schema package to build this map, or construct it manually.
 	InputSchema map[string]any
+	// ToModelOutput optionally transforms the tool execution result before it
+	// enters the conversation history. The original output is still reported in
+	// ToolResult events. If nil, the raw output is used as-is.
+	ToModelOutput func(result string) string
 }
 
 // ToolChoice controls which (if any) tool the model must call.
