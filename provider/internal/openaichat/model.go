@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -103,6 +104,7 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 			rawMap = m.cfg.TransformRequestBody(rawMap)
 		}
 		body, err = json.Marshal(rawMap)
+		slog.Info("[OPENAICHAT] request body with extra fields", "body", string(body))
 	} else {
 		body, err = json.Marshal(cr)
 	}
@@ -128,6 +130,7 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 	if err != nil {
 		return nil, fmt.Errorf("%s: http request: %w", m.cfg.ProviderName, err)
 	}
+	slog.Info("[OPENAICHAT] response", "status", resp.StatusCode, "provider", m.cfg.ProviderName)
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		respBody, readErr := io.ReadAll(resp.Body)
@@ -137,6 +140,7 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 				m.cfg.ProviderName, resp.StatusCode, readErr,
 			)
 		}
+		slog.Error("[OPENAICHAT] API error", "status", resp.StatusCode, "body", string(respBody), "provider", m.cfg.ProviderName)
 		return nil, fmt.Errorf(
 			"%s: unexpected status %d: %s",
 			m.cfg.ProviderName, resp.StatusCode, string(respBody),

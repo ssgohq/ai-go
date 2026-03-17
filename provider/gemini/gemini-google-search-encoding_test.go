@@ -88,16 +88,16 @@ func TestGoogleSearch_EnabledWithNoOtherTools(t *testing.T) {
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool (google_search), got %d", len(tools))
 	}
-	if _, ok := tools[0]["google_search"]; !ok {
-		t.Errorf("expected tool to have google_search key, got %v", tools[0])
+	if _, ok := tools[0]["googleSearch"]; !ok {
+		t.Errorf("expected tool to have googleSearch key, got %v", tools[0])
 	}
 	// Must not have the old OpenAI-style "type" key.
 	if _, ok := tools[0]["type"]; ok {
-		t.Error("google_search tool must not have a type key")
+		t.Error("googleSearch tool must not have a type key")
 	}
 	// Must not have a "function" key.
 	if _, ok := tools[0]["function"]; ok {
-		t.Error("google_search tool must not have a function key")
+		t.Error("googleSearch tool must not have a function key")
 	}
 }
 
@@ -125,10 +125,10 @@ func TestGoogleSearch_EnabledWithFunctionTools(t *testing.T) {
 	if tools[0]["type"] != "function" {
 		t.Errorf("expected first tool type=function, got %v", tools[0]["type"])
 	}
-	// Last tool is google_search (native format).
+	// Last tool is googleSearch (native format).
 	last := tools[len(tools)-1]
-	if _, ok := last["google_search"]; !ok {
-		t.Errorf("expected last tool to have google_search key, got %v", last)
+	if _, ok := last["googleSearch"]; !ok {
+		t.Errorf("expected last tool to have googleSearch key, got %v", last)
 	}
 }
 
@@ -215,9 +215,9 @@ func TestGoogleSearch_WithDynamicRetrievalThreshold(t *testing.T) {
 	}
 
 	tool := tools[0]
-	searchCfg, ok := tool["google_search"].(map[string]any)
+	searchCfg, ok := tool["googleSearch"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected google_search config map, got %T", tool["google_search"])
+		t.Fatalf("expected googleSearch config map, got %T", tool["googleSearch"])
 	}
 
 	dynCfg, ok := searchCfg["dynamic_retrieval_config"].(map[string]any)
@@ -256,9 +256,9 @@ func TestGoogleSearch_WithSearchTypes(t *testing.T) {
 	}
 
 	tool := tools[0]
-	searchCfg, ok := tool["google_search"].(map[string]any)
+	searchCfg, ok := tool["googleSearch"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected google_search config map, got %T", tool["google_search"])
+		t.Fatalf("expected googleSearch config map, got %T", tool["googleSearch"])
 	}
 
 	typesRaw, ok := searchCfg["search_types"]
@@ -308,9 +308,9 @@ func TestGoogleSearch_WithTimeRangeFilter(t *testing.T) {
 	}
 
 	tool := tools[0]
-	searchCfg, ok := tool["google_search"].(map[string]any)
+	searchCfg, ok := tool["googleSearch"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected google_search config map, got %T", tool["google_search"])
+		t.Fatalf("expected googleSearch config map, got %T", tool["googleSearch"])
 	}
 
 	trf, ok := searchCfg["time_range_filter"].(map[string]any)
@@ -326,7 +326,7 @@ func TestGoogleSearch_WithTimeRangeFilter(t *testing.T) {
 }
 
 func TestGoogleSearch_NoConfigNoGoogleSearchKey(t *testing.T) {
-	// When GoogleSearchConfig is nil, the tool should be {"google_search": {}}.
+	// When GoogleSearchConfig is nil, the tool should be {"googleSearch": {}}.
 	req := ai.LanguageModelRequest{
 		Messages: []ai.Message{ai.UserMessage("search")},
 		ProviderOptions: map[string]any{
@@ -344,12 +344,12 @@ func TestGoogleSearch_NoConfigNoGoogleSearchKey(t *testing.T) {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
 
-	searchCfg, ok := tools[0]["google_search"].(map[string]any)
+	searchCfg, ok := tools[0]["googleSearch"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected google_search key with map value, got %T", tools[0]["google_search"])
+		t.Fatalf("expected googleSearch key with map value, got %T", tools[0]["googleSearch"])
 	}
 	if len(searchCfg) != 0 {
-		t.Errorf("expected empty google_search config when GoogleSearchConfig is nil, got %v", searchCfg)
+		t.Errorf("expected empty googleSearch config when GoogleSearchConfig is nil, got %v", searchCfg)
 	}
 }
 
@@ -382,8 +382,8 @@ func TestGoogleSearch_AllModels_ToolAdded(t *testing.T) {
 				t.Errorf("model %s: expected 1 google_search tool, got %d", modelID, len(tools))
 			}
 			if len(tools) > 0 {
-				if _, ok := tools[0]["google_search"]; !ok {
-					t.Errorf("model %s: expected tool with google_search key, got %v", modelID, tools[0])
+				if _, ok := tools[0]["googleSearch"]; !ok {
+					t.Errorf("model %s: expected tool with googleSearch key, got %v", modelID, tools[0])
 				}
 			}
 		})

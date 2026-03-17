@@ -102,30 +102,35 @@ func extraBodyFieldsForRequest(req ai.LanguageModelRequest) map[string]any {
 
 	result := make(map[string]any)
 
-	// Thinking config.
+	// Thinking config — the OpenAI-compatible endpoint expects Gemini-specific
+	// fields under a top-level "google" key (matching the extra_body convention).
 	if opts.ThinkingConfig != nil {
 		cfg := opts.ThinkingConfig
 		thinkingMap := map[string]any{}
 		if cfg.ThinkingBudget != nil {
-			thinkingMap["thinkingBudget"] = *cfg.ThinkingBudget
+			thinkingMap["thinking_budget"] = *cfg.ThinkingBudget
 		}
 		if cfg.IncludeThoughts != nil {
-			thinkingMap["includeThoughts"] = *cfg.IncludeThoughts
+			thinkingMap["include_thoughts"] = *cfg.IncludeThoughts
 		}
 		if cfg.ThinkingLevel != "" {
-			thinkingMap["thinkingLevel"] = cfg.ThinkingLevel
+			thinkingMap["thinking_level"] = cfg.ThinkingLevel
 		}
 		if len(thinkingMap) > 0 {
-			result["thinkingConfig"] = thinkingMap
+			google, _ := result["google"].(map[string]any)
+			if google == nil {
+				google = map[string]any{}
+			}
+			google["thinking_config"] = thinkingMap
+			result["google"] = google
 		}
 	}
 
 	// Google Search grounding — append to the tools array (not replace).
-	// The OpenAI-compatible endpoint doesn't recognize {"type":"google_search"}
-	// in the standard tools array, but accepts native Gemini tool format
-	// {"google_search":{}} alongside function tools.
+	// The OpenAI-compatible endpoint accepts the camelCase Gemini tool format
+	// {"googleSearch":{}} alongside function tools in the tools array.
 	if opts.EnableGoogleSearch {
-		searchTool := map[string]any{"google_search": map[string]any{}}
+		searchTool := map[string]any{"googleSearch": map[string]any{}}
 
 		if cfg := opts.GoogleSearchConfig; cfg != nil {
 			searchCfg := map[string]any{}
@@ -145,7 +150,7 @@ func extraBodyFieldsForRequest(req ai.LanguageModelRequest) map[string]any {
 				}
 			}
 			if len(searchCfg) > 0 {
-				searchTool["google_search"] = searchCfg
+				searchTool["googleSearch"] = searchCfg
 			}
 		}
 
