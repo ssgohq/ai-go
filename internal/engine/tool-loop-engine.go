@@ -94,31 +94,7 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		toolCalls := acc.completed()
 		history = append(history, buildAssistantToolCallMessage(fullText, toolCalls))
 
-		toolNames := make([]string, 0, len(toolCalls))
-		var stepToolCalls []ToolCallInfo
-		var stepToolResults []ToolResult
-		for _, tc := range toolCalls {
-			out <- StepEvent{Type: StepEventToolCallReady, ToolCallID: tc.id, ToolCallName: tc.name}
-
-			result := executeToolCall(ctx, params.Tools, tc)
-
-			// Apply ToModelOutput transform for history; event keeps original output.
-			modelOutput := result.Output
-			if params.Tools != nil {
-				for _, def := range params.Tools.Definitions {
-					if def.Name == tc.name && def.ToModelOutput != nil {
-						modelOutput = def.ToModelOutput(result.Output)
-						break
-					}
-				}
-			}
-
-			history = append(history, buildToolResultMessage(tc.id, modelOutput))
-			out <- StepEvent{Type: StepEventToolResult, ToolResult: result}
-			toolNames = append(toolNames, tc.name)
-			stepToolCalls = append(stepToolCalls, ToolCallInfo{ID: tc.id, Name: tc.name, Args: tc.args})
-			stepToolResults = append(stepToolResults, *result)
-		}
+		toolNames, stepToolCalls, stepToolResults := executeToolCalls(ctx, out, params.Tools, toolCalls, &history)
 
 		out <- StepEvent{
 			Type:             StepEventStepEnd,
@@ -179,91 +155,110 @@ func consumeStream(
 ) (streamResult, bool) {
 	var sr streamResult
 	for ev := range eventCh {
-		switch ev.Type {
-		case StreamEventTextDelta:
-			sr.text += ev.TextDelta
-			stepEv := StepEvent{Type: StepEventTextDelta, TextDelta: ev.TextDelta}
-			out <- stepEv
-			if cb != nil && cb.OnChunk != nil {
-				cb.OnChunk(stepEv)
-			}
-
-		case StreamEventReasoningDelta:
-			stepEv := StepEvent{
-				Type:             StepEventReasoningDelta,
-				ReasoningDelta:   ev.TextDelta,
-				ThoughtSignature: ev.ThoughtSignature,
-			}
-			sr.reasoning += ev.TextDelta
-			out <- stepEv
-			if cb != nil && cb.OnChunk != nil {
-				cb.OnChunk(stepEv)
-			}
-
-		case StreamEventToolCallDelta:
-			if acc != nil {
-				isNew := acc.add(ev)
-				if isNew {
-					stepEv := StepEvent{
-						Type:              StepEventToolCallStart,
-						ToolCallIndex:     ev.ToolCallIndex,
-						ToolCallID:        ev.ToolCallID,
-						ToolCallName:      ev.ToolCallName,
-						ToolCallArgsDelta: ev.ToolCallArgsDelta,
-						ThoughtSignature:  ev.ThoughtSignature,
-					}
-					out <- stepEv
-					if cb != nil && cb.OnChunk != nil {
-						cb.OnChunk(stepEv)
-					}
-				} else if ev.ToolCallArgsDelta != "" {
-					stepEv := StepEvent{
-						Type:              StepEventToolCallDelta,
-						ToolCallIndex:     ev.ToolCallIndex,
-						ToolCallID:        ev.ToolCallID,
-						ToolCallArgsDelta: ev.ToolCallArgsDelta,
-					}
-					out <- stepEv
-					if cb != nil && cb.OnChunk != nil {
-						cb.OnChunk(stepEv)
-					}
-				}
-			}
-
-		case StreamEventUsage:
-			stepEv := StepEvent{Type: StepEventUsage, Usage: ev.Usage}
-			sr.usage = ev.Usage
-			out <- stepEv
-			if cb != nil && cb.OnChunk != nil {
-				cb.OnChunk(stepEv)
-			}
-
-		case StreamEventSource:
-			if ev.Source != nil {
-				stepEv := StepEvent{Type: StepEventSource, Source: ev.Source}
-				out <- stepEv
-				if cb != nil && cb.OnChunk != nil {
-					cb.OnChunk(stepEv)
-				}
-			}
-
-		case StreamEventFinish:
-			sr.finish = ev.FinishReason
-			sr.rawFinish = ev.RawFinishReason
-			sr.providerMeta = ev.ProviderMetadata
-			if len(ev.Warnings) > 0 {
-				sr.warnings = append(sr.warnings, ev.Warnings...)
-			}
-
-		case StreamEventError:
-			out <- StepEvent{Type: StepEventError, Error: ev.Error}
-			if cb != nil && cb.OnError != nil {
-				cb.OnError(ev.Error)
-			}
+		if fatal := applyStreamEvent(ev, &sr, acc, out, cb); fatal {
 			return sr, true
 		}
 	}
 	return sr, false
+}
+
+// applyStreamEvent dispatches a single StreamEvent: updates sr in-place,
+// forwards StepEvents to out, and fires lifecycle callbacks. Returns true
+// if the event was a fatal StreamEventError.
+func applyStreamEvent(
+	ev StreamEvent,
+	sr *streamResult,
+	acc *toolCallAccumulator,
+	out chan<- StepEvent,
+	cb *LifecycleCallbacks,
+) bool {
+	emitChunk := func(stepEv StepEvent) {
+		out <- stepEv
+		if cb != nil && cb.OnChunk != nil {
+			cb.OnChunk(stepEv)
+		}
+	}
+	switch ev.Type {
+	case StreamEventTextDelta:
+		sr.text += ev.TextDelta
+		emitChunk(StepEvent{Type: StepEventTextDelta, TextDelta: ev.TextDelta})
+
+	case StreamEventReasoningDelta:
+		sr.reasoning += ev.TextDelta
+		emitChunk(StepEvent{
+			Type:             StepEventReasoningDelta,
+			ReasoningDelta:   ev.TextDelta,
+			ThoughtSignature: ev.ThoughtSignature,
+		})
+
+	case StreamEventToolCallDelta:
+		handleToolCallDelta(ev, acc, out, cb)
+
+	case StreamEventUsage:
+		sr.usage = ev.Usage
+		emitChunk(StepEvent{Type: StepEventUsage, Usage: ev.Usage})
+
+	case StreamEventSource:
+		if ev.Source != nil {
+			emitChunk(StepEvent{Type: StepEventSource, Source: ev.Source})
+		}
+
+	case StreamEventFinish:
+		sr.finish = ev.FinishReason
+		sr.rawFinish = ev.RawFinishReason
+		sr.providerMeta = ev.ProviderMetadata
+		if len(ev.Warnings) > 0 {
+			sr.warnings = append(sr.warnings, ev.Warnings...)
+		}
+
+	case StreamEventError:
+		out <- StepEvent{Type: StepEventError, Error: ev.Error}
+		if cb != nil && cb.OnError != nil {
+			cb.OnError(ev.Error)
+		}
+		return true
+	}
+	return false
+}
+
+// handleToolCallDelta handles a StreamEventToolCallDelta event by forwarding
+// either a tool-call-start or a tool-call-delta StepEvent to out and the
+// optional chunk callback. It is a no-op when acc is nil.
+func handleToolCallDelta(
+	ev StreamEvent,
+	acc *toolCallAccumulator,
+	out chan<- StepEvent,
+	cb *LifecycleCallbacks,
+) {
+	if acc == nil {
+		return
+	}
+	isNew := acc.add(ev)
+	if isNew {
+		stepEv := StepEvent{
+			Type:              StepEventToolCallStart,
+			ToolCallIndex:     ev.ToolCallIndex,
+			ToolCallID:        ev.ToolCallID,
+			ToolCallName:      ev.ToolCallName,
+			ToolCallArgsDelta: ev.ToolCallArgsDelta,
+			ThoughtSignature:  ev.ThoughtSignature,
+		}
+		out <- stepEv
+		if cb != nil && cb.OnChunk != nil {
+			cb.OnChunk(stepEv)
+		}
+	} else if ev.ToolCallArgsDelta != "" {
+		stepEv := StepEvent{
+			Type:              StepEventToolCallDelta,
+			ToolCallIndex:     ev.ToolCallIndex,
+			ToolCallID:        ev.ToolCallID,
+			ToolCallArgsDelta: ev.ToolCallArgsDelta,
+		}
+		out <- stepEv
+		if cb != nil && cb.OnChunk != nil {
+			cb.OnChunk(stepEv)
+		}
+	}
 }
 
 // emitFinalGeneration runs a tool-free generation after maxSteps are exhausted so the
@@ -299,6 +294,42 @@ func emitFinalGeneration(
 		Warnings:         sr.warnings,
 	}
 	return true
+}
+
+// executeToolCalls processes a batch of completed tool calls: fires events,
+// runs executors, appends tool-result messages to history, and returns the
+// accumulated names, call infos, and results for step-finish accounting.
+func executeToolCalls(
+	ctx context.Context,
+	out chan<- StepEvent,
+	tools *ToolSet,
+	toolCalls []toolCallState,
+	history *[]Message,
+) (toolNames []string, stepToolCalls []ToolCallInfo, stepToolResults []ToolResult) {
+	toolNames = make([]string, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		out <- StepEvent{Type: StepEventToolCallReady, ToolCallID: tc.id, ToolCallName: tc.name}
+
+		result := executeToolCall(ctx, tools, tc)
+
+		// Apply ToModelOutput transform for history; event keeps original output.
+		modelOutput := result.Output
+		if tools != nil {
+			for _, def := range tools.Definitions {
+				if def.Name == tc.name && def.ToModelOutput != nil {
+					modelOutput = def.ToModelOutput(result.Output)
+					break
+				}
+			}
+		}
+
+		*history = append(*history, buildToolResultMessage(tc.id, modelOutput))
+		out <- StepEvent{Type: StepEventToolResult, ToolResult: result}
+		toolNames = append(toolNames, tc.name)
+		stepToolCalls = append(stepToolCalls, ToolCallInfo{ID: tc.id, Name: tc.name, Args: tc.args})
+		stepToolResults = append(stepToolResults, *result)
+	}
+	return toolNames, stepToolCalls, stepToolResults
 }
 
 func executeToolCall(ctx context.Context, tools *ToolSet, tc toolCallState) *ToolResult {

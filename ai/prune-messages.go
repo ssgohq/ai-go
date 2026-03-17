@@ -66,43 +66,48 @@ func PruneMessages(messages []Message, opts PruneOptions) []Message {
 
 	result := make([]Message, 0, len(messages))
 	for i, msg := range messages {
-		shouldPruneReasoning := shouldPrune(reasoning, i, len(messages), opts.N)
-		shouldPruneToolCalls := shouldPrune(toolCalls, i, len(messages), opts.N)
-
-		// Tool-role messages are entirely tool-related; prune the whole message.
-		if shouldPruneToolCalls && msg.Role == RoleTool {
-			if emptyMsgs == PruneModeRemove {
-				continue
-			}
-			result = append(result, Message{Role: msg.Role})
-			continue
+		pruneR := shouldPrune(reasoning, i, len(messages), opts.N)
+		pruneT := shouldPrune(toolCalls, i, len(messages), opts.N)
+		if m, keep := pruneMessage(msg, pruneR, pruneT, emptyMsgs); keep {
+			result = append(result, m)
 		}
-
-		if !shouldPruneReasoning && !shouldPruneToolCalls {
-			result = append(result, msg)
-			continue
-		}
-
-		var filtered []ContentPart
-		for _, part := range msg.Content {
-			if shouldPruneReasoning && part.Type == ContentPartTypeReasoning {
-				continue
-			}
-			if shouldPruneToolCalls &&
-				(part.Type == ContentPartTypeToolCall || part.Type == ContentPartTypeToolResult) {
-				continue
-			}
-			filtered = append(filtered, part)
-		}
-
-		if len(filtered) == 0 && emptyMsgs == PruneModeRemove {
-			continue
-		}
-
-		result = append(result, Message{Role: msg.Role, Content: filtered})
 	}
 
 	return result
+}
+
+// pruneMessage applies per-message pruning and returns the pruned message and
+// whether it should be kept (false means drop it entirely).
+func pruneMessage(msg Message, pruneReasoning, pruneToolCalls bool, emptyMsgs PruneMode) (Message, bool) {
+	// Tool-role messages are entirely tool-related; prune the whole message.
+	if pruneToolCalls && msg.Role == RoleTool {
+		if emptyMsgs == PruneModeRemove {
+			return Message{}, false
+		}
+		return Message{Role: msg.Role}, true
+	}
+
+	if !pruneReasoning && !pruneToolCalls {
+		return msg, true
+	}
+
+	var filtered []ContentPart
+	for _, part := range msg.Content {
+		if pruneReasoning && part.Type == ContentPartTypeReasoning {
+			continue
+		}
+		if pruneToolCalls &&
+			(part.Type == ContentPartTypeToolCall || part.Type == ContentPartTypeToolResult) {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+
+	if len(filtered) == 0 && emptyMsgs == PruneModeRemove {
+		return Message{}, false
+	}
+
+	return Message{Role: msg.Role, Content: filtered}, true
 }
 
 // shouldPrune returns true if content at index i should be pruned given the mode.
