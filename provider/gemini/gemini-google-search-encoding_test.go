@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/open-ai-sdk/ai-go/ai"
@@ -10,20 +11,64 @@ import (
 // testSearchModel is a model ID used in Google Search grounding tests.
 const testSearchModel = "gemini-2.5-flash"
 
-// encodeWithExtraTools is a test helper that runs EncodeRequest with ExtraTools derived
-// from gemini ProviderOptions so tests don't need to spin up an HTTP server.
-func encodeWithExtraTools(req ai.LanguageModelRequest) (openaichat.ChatRequest, error) {
-	return encodeWithExtraToolsForModel(testSearchModel, req)
+// encodeFullRequest simulates the complete request encoding pipeline including
+// extra body fields and TransformRequestBody, returning the final JSON body as a map.
+func encodeFullRequest(req ai.LanguageModelRequest) (map[string]any, error) {
+	return encodeFullRequestForModel(testSearchModel, req)
 }
 
-func encodeWithExtraToolsForModel(modelID string, req ai.LanguageModelRequest) (openaichat.ChatRequest, error) {
-	extra := extraToolsForRequest(modelID, req)
-	return openaichat.EncodeRequest(openaichat.EncodeRequestParams{
+func encodeFullRequestForModel(modelID string, req ai.LanguageModelRequest) (map[string]any, error) {
+	cr, err := openaichat.EncodeRequest(openaichat.EncodeRequestParams{
 		ModelID:            modelID,
 		SanitizeTools:      sanitizeToolSchemas,
 		IncludeStreamUsage: true,
-		ExtraTools:         extra,
 	}, req, true)
+	if err != nil {
+		return nil, err
+	}
+
+	// Marshal to map (same as openaichat.LanguageModel.Stream does).
+	raw, err := json.Marshal(cr)
+	if err != nil {
+		return nil, err
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, err
+	}
+
+	// Merge extra body fields.
+	extraFields := extraBodyFieldsForRequest(req)
+	for k, v := range extraFields {
+		body[k] = v
+	}
+
+	// Apply transform.
+	body = mergeGoogleSearchTools(body)
+
+	return body, nil
+}
+
+// toolsFromBody extracts the tools array from an encoded body map.
+func toolsFromBody(body map[string]any) []map[string]any {
+	toolsRaw, ok := body["tools"]
+	if !ok {
+		return nil
+	}
+	switch tools := toolsRaw.(type) {
+	case []any:
+		result := make([]map[string]any, 0, len(tools))
+		for _, t := range tools {
+			if m, ok := t.(map[string]any); ok {
+				result = append(result, m)
+			}
+		}
+		return result
+	case []map[string]any:
+		return tools
+	default:
+		return nil
+	}
 }
 
 func TestGoogleSearch_EnabledWithNoOtherTools(t *testing.T) {
@@ -34,19 +79,24 @@ func TestGoogleSearch_EnabledWithNoOtherTools(t *testing.T) {
 		},
 	}
 
-	cr, err := encodeWithExtraTools(req)
+	body, err := encodeFullRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(cr.Tools) != 1 {
-		t.Fatalf("expected 1 tool (google_search), got %d", len(cr.Tools))
+	tools := toolsFromBody(body)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool (google_search), got %d", len(tools))
 	}
-	if cr.Tools[0]["type"] != "google_search" {
-		t.Errorf("expected type=google_search, got %v", cr.Tools[0]["type"])
+	if _, ok := tools[0]["google_search"]; !ok {
+		t.Errorf("expected tool to have google_search key, got %v", tools[0])
 	}
-	// google_search has no "function" key
-	if _, ok := cr.Tools[0]["function"]; ok {
+	// Must not have the old OpenAI-style "type" key.
+	if _, ok := tools[0]["type"]; ok {
+		t.Error("google_search tool must not have a type key")
+	}
+	// Must not have a "function" key.
+	if _, ok := tools[0]["function"]; ok {
 		t.Error("google_search tool must not have a function key")
 	}
 }
@@ -62,22 +112,23 @@ func TestGoogleSearch_EnabledWithFunctionTools(t *testing.T) {
 		},
 	}
 
-	cr, err := encodeWithExtraTools(req)
+	body, err := encodeFullRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(cr.Tools) != 2 {
-		t.Fatalf("expected 2 tools (function + google_search), got %d", len(cr.Tools))
+	tools := toolsFromBody(body)
+	if len(tools) != 2 {
+		t.Fatalf("expected 2 tools (function + google_search), got %d", len(tools))
 	}
-	// First tool is the function
-	if cr.Tools[0]["type"] != "function" {
-		t.Errorf("expected first tool type=function, got %v", cr.Tools[0]["type"])
+	// First tool is the function.
+	if tools[0]["type"] != "function" {
+		t.Errorf("expected first tool type=function, got %v", tools[0]["type"])
 	}
-	// Last tool is google_search
-	last := cr.Tools[len(cr.Tools)-1]
-	if last["type"] != "google_search" {
-		t.Errorf("expected last tool type=google_search, got %v", last["type"])
+	// Last tool is google_search (native format).
+	last := tools[len(tools)-1]
+	if _, ok := last["google_search"]; !ok {
+		t.Errorf("expected last tool to have google_search key, got %v", last)
 	}
 }
 
@@ -86,13 +137,14 @@ func TestGoogleSearch_DisabledByDefault(t *testing.T) {
 		Messages: []ai.Message{ai.UserMessage("hello")},
 	}
 
-	cr, err := encodeWithExtraTools(req)
+	body, err := encodeFullRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(cr.Tools) != 0 {
-		t.Errorf("expected no tools when google search not enabled, got %d", len(cr.Tools))
+	tools := toolsFromBody(body)
+	if len(tools) != 0 {
+		t.Errorf("expected no tools when google search not enabled, got %d", len(tools))
 	}
 }
 
@@ -104,13 +156,14 @@ func TestGoogleSearch_ExplicitlyDisabled(t *testing.T) {
 		},
 	}
 
-	cr, err := encodeWithExtraTools(req)
+	body, err := encodeFullRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(cr.Tools) != 0 {
-		t.Errorf("expected no tools when EnableGoogleSearch=false, got %d", len(cr.Tools))
+	tools := toolsFromBody(body)
+	if len(tools) != 0 {
+		t.Errorf("expected no tools when EnableGoogleSearch=false, got %d", len(tools))
 	}
 }
 
@@ -151,19 +204,17 @@ func TestGoogleSearch_WithDynamicRetrievalThreshold(t *testing.T) {
 		},
 	}
 
-	cr, err := encodeWithExtraTools(req)
+	body, err := encodeFullRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cr.Tools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(cr.Tools))
+
+	tools := toolsFromBody(body)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
 
-	tool := cr.Tools[0]
-	if tool["type"] != "google_search" {
-		t.Errorf("expected type=google_search, got %v", tool["type"])
-	}
-
+	tool := tools[0]
 	searchCfg, ok := tool["google_search"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected google_search config map, got %T", tool["google_search"])
@@ -194,26 +245,39 @@ func TestGoogleSearch_WithSearchTypes(t *testing.T) {
 		},
 	}
 
-	cr, err := encodeWithExtraTools(req)
+	body, err := encodeFullRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cr.Tools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(cr.Tools))
+
+	tools := toolsFromBody(body)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
 
-	tool := cr.Tools[0]
+	tool := tools[0]
 	searchCfg, ok := tool["google_search"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected google_search config map, got %T", tool["google_search"])
 	}
 
-	types, ok := searchCfg["search_types"].([]string)
+	typesRaw, ok := searchCfg["search_types"]
 	if !ok {
-		t.Fatalf("expected search_types []string, got %T", searchCfg["search_types"])
+		t.Fatal("expected search_types key in google_search config")
 	}
-	if len(types) != 2 || types[0] != "web" || types[1] != "image" {
-		t.Errorf("expected search_types=[web image], got %v", types)
+	// Extra body fields are merged after JSON round-trip, so the slice
+	// retains its original Go type ([]string).
+	switch types := typesRaw.(type) {
+	case []string:
+		if len(types) != 2 || types[0] != "web" || types[1] != "image" {
+			t.Errorf("expected search_types=[web image], got %v", types)
+		}
+	case []any:
+		if len(types) != 2 || types[0] != "web" || types[1] != "image" {
+			t.Errorf("expected search_types=[web image], got %v", types)
+		}
+	default:
+		t.Fatalf("expected search_types []string or []any, got %T", typesRaw)
 	}
 }
 
@@ -233,15 +297,17 @@ func TestGoogleSearch_WithTimeRangeFilter(t *testing.T) {
 		},
 	}
 
-	cr, err := encodeWithExtraTools(req)
+	body, err := encodeFullRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cr.Tools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(cr.Tools))
+
+	tools := toolsFromBody(body)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
 
-	tool := cr.Tools[0]
+	tool := tools[0]
 	searchCfg, ok := tool["google_search"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected google_search config map, got %T", tool["google_search"])
@@ -260,7 +326,7 @@ func TestGoogleSearch_WithTimeRangeFilter(t *testing.T) {
 }
 
 func TestGoogleSearch_NoConfigNoGoogleSearchKey(t *testing.T) {
-	// When GoogleSearchConfig is nil, the tool should have no "google_search" key.
+	// When GoogleSearchConfig is nil, the tool should be {"google_search": {}}.
 	req := ai.LanguageModelRequest{
 		Messages: []ai.Message{ai.UserMessage("search")},
 		ProviderOptions: map[string]any{
@@ -268,15 +334,22 @@ func TestGoogleSearch_NoConfigNoGoogleSearchKey(t *testing.T) {
 		},
 	}
 
-	cr, err := encodeWithExtraTools(req)
+	body, err := encodeFullRequest(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cr.Tools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(cr.Tools))
+
+	tools := toolsFromBody(body)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
-	if _, ok := cr.Tools[0]["google_search"]; ok {
-		t.Error("expected no google_search config key when GoogleSearchConfig is nil")
+
+	searchCfg, ok := tools[0]["google_search"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected google_search key with map value, got %T", tools[0]["google_search"])
+	}
+	if len(searchCfg) != 0 {
+		t.Errorf("expected empty google_search config when GoogleSearchConfig is nil, got %v", searchCfg)
 	}
 }
 
@@ -300,15 +373,18 @@ func TestGoogleSearch_AllModels_ToolAdded(t *testing.T) {
 
 	for _, modelID := range models {
 		t.Run(modelID, func(t *testing.T) {
-			cr, err := encodeWithExtraToolsForModel(modelID, req)
+			body, err := encodeFullRequestForModel(modelID, req)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if len(cr.Tools) != 1 {
-				t.Errorf("model %s: expected 1 google_search tool, got %d", modelID, len(cr.Tools))
+			tools := toolsFromBody(body)
+			if len(tools) != 1 {
+				t.Errorf("model %s: expected 1 google_search tool, got %d", modelID, len(tools))
 			}
-			if len(cr.Tools) > 0 && cr.Tools[0]["type"] != "google_search" {
-				t.Errorf("model %s: expected type=google_search, got %v", modelID, cr.Tools[0]["type"])
+			if len(tools) > 0 {
+				if _, ok := tools[0]["google_search"]; !ok {
+					t.Errorf("model %s: expected tool with google_search key, got %v", modelID, tools[0])
+				}
 			}
 		})
 	}

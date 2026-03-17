@@ -45,6 +45,7 @@ func NewLanguageModel(modelID string, cfg Config) *LanguageModel {
 			return extraToolsForRequest(modelID, req)
 		},
 		ExtraBodyFieldsForRequest: extraBodyFieldsForRequest,
+		TransformRequestBody:      mergeGoogleSearchTools,
 	})
 	return &LanguageModel{modelID: modelID, core: core}
 }
@@ -84,70 +85,104 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 }
 
 // extraToolsForRequest returns Gemini-specific built-in tools based on provider options.
-// All Gemini models support google_search grounding.
+// Google Search grounding is passed via extra body fields (not the tools array) because
+// the OpenAI-compatible endpoint only supports {"type":"function"} tools. The native
+// google_search tool is injected via extraBodyFieldsForRequest instead.
 func extraToolsForRequest(modelID string, req ai.LanguageModelRequest) []map[string]any {
-	opts := parseProviderOptions(req.ProviderOptions)
-	if !opts.EnableGoogleSearch {
-		return nil
-	}
-
-	tool := map[string]any{"type": "google_search"}
-
-	if cfg := opts.GoogleSearchConfig; cfg != nil {
-		searchCfg := map[string]any{}
-
-		if cfg.DynamicRetrievalThreshold != nil {
-			searchCfg["dynamic_retrieval_config"] = map[string]any{
-				"mode":              "MODE_DYNAMIC",
-				"dynamic_threshold": *cfg.DynamicRetrievalThreshold,
-			}
-		}
-		if len(cfg.SearchTypes) > 0 {
-			searchCfg["search_types"] = cfg.SearchTypes
-		}
-		if cfg.TimeRangeFilter != nil {
-			searchCfg["time_range_filter"] = map[string]any{
-				"start_time": cfg.TimeRangeFilter.StartTime,
-				"end_time":   cfg.TimeRangeFilter.EndTime,
-			}
-		}
-		if len(searchCfg) > 0 {
-			tool["google_search"] = searchCfg
-		}
-	}
-
-	return []map[string]any{tool}
+	// google_search is no longer sent as a tool — it goes via extra body fields.
+	return nil
 }
 
 // extraBodyFieldsForRequest returns provider-specific top-level request body fields
-// based on provider options. Currently handles thinkingConfig.
+// based on provider options. Handles thinkingConfig.
+// Google Search is handled separately via TransformRequestBody to merge into tools.
 // Wired via openaichat.ModelConfig.ExtraBodyFieldsForRequest in NewLanguageModel.
 func extraBodyFieldsForRequest(req ai.LanguageModelRequest) map[string]any {
 	opts := parseProviderOptions(req.ProviderOptions)
-	if opts.ThinkingConfig == nil {
+
+	result := make(map[string]any)
+
+	// Thinking config.
+	if opts.ThinkingConfig != nil {
+		cfg := opts.ThinkingConfig
+		thinkingMap := map[string]any{}
+		if cfg.ThinkingBudget != nil {
+			thinkingMap["thinkingBudget"] = *cfg.ThinkingBudget
+		}
+		if cfg.IncludeThoughts != nil {
+			thinkingMap["includeThoughts"] = *cfg.IncludeThoughts
+		}
+		if cfg.ThinkingLevel != "" {
+			thinkingMap["thinkingLevel"] = cfg.ThinkingLevel
+		}
+		if len(thinkingMap) > 0 {
+			result["thinkingConfig"] = thinkingMap
+		}
+	}
+
+	// Google Search grounding — append to the tools array (not replace).
+	// The OpenAI-compatible endpoint doesn't recognize {"type":"google_search"}
+	// in the standard tools array, but accepts native Gemini tool format
+	// {"google_search":{}} alongside function tools.
+	if opts.EnableGoogleSearch {
+		searchTool := map[string]any{"google_search": map[string]any{}}
+
+		if cfg := opts.GoogleSearchConfig; cfg != nil {
+			searchCfg := map[string]any{}
+			if cfg.DynamicRetrievalThreshold != nil {
+				searchCfg["dynamic_retrieval_config"] = map[string]any{
+					"mode":              "MODE_DYNAMIC",
+					"dynamic_threshold": *cfg.DynamicRetrievalThreshold,
+				}
+			}
+			if len(cfg.SearchTypes) > 0 {
+				searchCfg["search_types"] = cfg.SearchTypes
+			}
+			if cfg.TimeRangeFilter != nil {
+				searchCfg["time_range_filter"] = map[string]any{
+					"start_time": cfg.TimeRangeFilter.StartTime,
+					"end_time":   cfg.TimeRangeFilter.EndTime,
+				}
+			}
+			if len(searchCfg) > 0 {
+				searchTool["google_search"] = searchCfg
+			}
+		}
+
+		// Store search tool in a temporary key; mergeGoogleSearchTools will
+		// move it into the actual tools array.
+		result["_google_search_tool"] = searchTool
+	}
+
+	if len(result) == 0 {
 		return nil
 	}
+	return result
+}
 
-	cfg := opts.ThinkingConfig
-	thinkingMap := map[string]any{}
+// mergeGoogleSearchTools is a TransformRequestBody hook that moves
+// the _google_search_tool entry into the tools array and removes the temp key.
+func mergeGoogleSearchTools(body map[string]any) map[string]any {
+	searchTool, ok := body["_google_search_tool"]
+	if !ok {
+		return body
+	}
+	delete(body, "_google_search_tool")
 
-	if cfg.ThinkingBudget != nil {
-		thinkingMap["thinkingBudget"] = *cfg.ThinkingBudget
+	// Append to existing tools array or create a new one.
+	if existing, ok := body["tools"].([]any); ok {
+		body["tools"] = append(existing, searchTool)
+	} else if existing, ok := body["tools"].([]map[string]any); ok {
+		asAny := make([]any, len(existing)+1)
+		for i, t := range existing {
+			asAny[i] = t
+		}
+		asAny[len(existing)] = searchTool
+		body["tools"] = asAny
+	} else {
+		body["tools"] = []any{searchTool}
 	}
-	if cfg.IncludeThoughts != nil {
-		thinkingMap["includeThoughts"] = *cfg.IncludeThoughts
-	}
-	if cfg.ThinkingLevel != "" {
-		thinkingMap["thinkingLevel"] = cfg.ThinkingLevel
-	}
-
-	if len(thinkingMap) == 0 {
-		return nil
-	}
-
-	return map[string]any{
-		"thinkingConfig": thinkingMap,
-	}
+	return body
 }
 
 // warningsForRequest returns advisory warnings for unsupported option combinations.
