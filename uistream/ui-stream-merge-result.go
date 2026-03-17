@@ -14,9 +14,10 @@ type StreamEventer interface {
 
 // mergeConfig holds options for MergeStreamResult.
 type mergeConfig struct {
-	toolResultHook ToolResultHook
-	sourceHook     SourceHook
-	onFinish       func(text string)
+	toolResultHook     ToolResultHook
+	sourceHook         SourceHook
+	onFinish           func(text string)
+	persistenceBuilder *PersistedMessageBuilder
 }
 
 // MergeOption configures MergeStreamResult behavior.
@@ -104,6 +105,9 @@ func (wr *Writer) MergeStreamResult(sr StreamEventer, opts ...MergeOption) strin
 	cs := producer.Produce(producerCh)
 
 	for c := range cs.Chunks {
+		if cfg.persistenceBuilder != nil {
+			cfg.persistenceBuilder.ObserveChunk(c)
+		}
 		switch c.Type {
 		case ChunkFinish:
 			// Do NOT emit finish here; caller manages lifecycle.
