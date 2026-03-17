@@ -17,10 +17,10 @@ const defaultBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
 // Confirmed: gemini-2.5-pro does NOT support google_search (returns empty stream).
 // Use an allowlist (not blocklist) so new unsupported models are safe by default.
 var googleSearchSupportedModels = map[string]bool{
-	"gemini-2.5-flash":      true,
-	"gemini-2.5-flash-lite": true,
+	"gemini-2.5-flash":       true,
+	"gemini-2.5-flash-lite":  true,
 	"gemini-3-flash-preview": true,
-	"gemini-3-pro-preview":  true,
+	"gemini-3-pro-preview":   true,
 }
 
 // LanguageModel implements ai.LanguageModel for the Gemini OpenAI-compatible API.

@@ -36,10 +36,10 @@ type StreamChunk struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens        int `json:"prompt_tokens"`
-		CompletionTokens    int `json:"completion_tokens"`
-		TotalTokens         int `json:"total_tokens"`
-		ThoughtsTokenCount  int `json:"thoughts_token_count,omitempty"`
+		PromptTokens       int `json:"prompt_tokens"`
+		CompletionTokens   int `json:"completion_tokens"`
+		TotalTokens        int `json:"total_tokens"`
+		ThoughtsTokenCount int `json:"thoughts_token_count,omitempty"`
 	} `json:"usage"`
 	// ProviderMetadata holds provider-specific metadata from the response (e.g. Gemini groundingMetadata).
 	ProviderMetadata map[string]any `json:"provider_metadata,omitempty"`
