@@ -20,6 +20,10 @@ type ToolResult struct {
 // wr is bound to the same io.Writer as the adapter so callers can emit additional chunks.
 type ToolResultHook func(wr *Writer, result ToolResult)
 
+// SourceHook is called when a source-url chunk is emitted during streaming.
+// Callers can use this to collect grounding sources for persistence.
+type SourceHook func(wr *Writer, sourceID, url, title string)
+
 // Adapter translates a channel of engine.StepEvents into UI message stream chunks.
 // It is transport-agnostic: callers can write to an http.ResponseWriter, a buffer, etc.
 //
@@ -28,6 +32,7 @@ type ToolResultHook func(wr *Writer, result ToolResult)
 type Adapter struct {
 	msgID          string
 	toolResultHook ToolResultHook
+	sourceHook     SourceHook
 	onFinish       func(text, finishReason string)
 }
 
@@ -41,6 +46,13 @@ func NewAdapter(msgID string) *Adapter {
 // wrapping the internal event channel.
 func (a *Adapter) WithToolResultHook(hook ToolResultHook) *Adapter {
 	a.toolResultHook = hook
+	return a
+}
+
+// WithSourceHook sets a hook called when a source-url chunk is emitted.
+// Use this to collect grounding sources for persistence or post-processing.
+func (a *Adapter) WithSourceHook(hook SourceHook) *Adapter {
+	a.sourceHook = hook
 	return a
 }
 
@@ -117,6 +129,17 @@ func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
 			wr.WriteError(msg)
 		default:
 			wr.WriteChunk(c.Type, c.Fields)
+
+			// Fire source hook when a source-url chunk is emitted.
+			if c.Type == ChunkSourceURL && a.sourceHook != nil {
+				sid, ok1 := c.Fields["sourceId"].(string)
+				surl, ok2 := c.Fields["url"].(string)
+				stitle, ok3 := c.Fields["title"].(string)
+				_ = ok1
+				_ = ok2
+				_ = ok3
+				a.sourceHook(wr, sid, surl, stitle)
+			}
 
 			// Fire hook after tool-output-available with raw string data.
 			if c.Type == ChunkToolOutputAvailable && a.toolResultHook != nil {

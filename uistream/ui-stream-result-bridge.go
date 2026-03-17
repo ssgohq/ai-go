@@ -12,6 +12,7 @@ type UIStreamOption func(*uiStreamBridgeConfig)
 // uiStreamBridgeConfig holds options for StreamToWriter.
 type uiStreamBridgeConfig struct {
 	toolResultHook ToolResultHook
+	sourceHook     SourceHook
 	onFinish       func(text string)
 }
 
@@ -19,6 +20,14 @@ type uiStreamBridgeConfig struct {
 func WithUIToolResultHook(hook ToolResultHook) UIStreamOption {
 	return func(c *uiStreamBridgeConfig) {
 		c.toolResultHook = hook
+	}
+}
+
+// WithUISourceHook sets a callback invoked when a source-url chunk is emitted.
+// Use this to collect grounding sources for persistence.
+func WithUISourceHook(hook SourceHook) UIStreamOption {
+	return func(c *uiStreamBridgeConfig) {
+		c.sourceHook = hook
 	}
 }
 
@@ -49,6 +58,10 @@ func StreamToWriter(sr *ai.StreamResult, w io.Writer, msgID string, opts ...UISt
 
 	if cfg.toolResultHook != nil {
 		adapter.WithToolResultHook(cfg.toolResultHook)
+	}
+
+	if cfg.sourceHook != nil {
+		adapter.WithSourceHook(cfg.sourceHook)
 	}
 
 	if cfg.onFinish != nil {
