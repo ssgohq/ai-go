@@ -13,6 +13,21 @@ type ToUIStreamOptions struct {
 	// MessageMetadata is called to attach metadata to the finish chunk.
 	// If nil, no metadata is attached.
 	MessageMetadata func(info MessageMetadataInfo) map[string]any
+
+	// SendStart controls whether the start chunk is emitted (default: nil = true).
+	// Set to boolPtr(false) when merging into an outer stream that already emitted start.
+	SendStart *bool
+	// SendFinish controls whether the finish chunk is emitted (default: nil = true).
+	// Set to boolPtr(false) when the outer stream manages the finish lifecycle.
+	SendFinish *bool
+}
+
+// boolVal returns the dereferenced value of a *bool, defaulting to def if nil.
+func boolVal(b *bool, def bool) bool {
+	if b == nil {
+		return def
+	}
+	return *b
 }
 
 // MessageMetadataInfo provides context for the MessageMetadata callback.
@@ -74,18 +89,30 @@ func ToUIMessageStream(sr StreamEventer, msgID string, opts ToUIStreamOptions) <
 	producer := NewChunkProducer(msgID)
 	cs := producer.Produce(filteredCh)
 
-	// If no metadata callback, return chunks directly.
-	if opts.MessageMetadata == nil {
+	sendStart := boolVal(opts.SendStart, true)
+	sendFinish := boolVal(opts.SendFinish, true)
+	needLifecycleFilter := !sendStart || !sendFinish
+
+	// If no metadata callback and no lifecycle filtering, return chunks directly.
+	if opts.MessageMetadata == nil && !needLifecycleFilter {
 		return cs.Chunks
 	}
 
-	// Wrap to attach metadata to the finish chunk.
+	// Wrap to attach metadata and/or filter lifecycle chunks.
 	out := make(chan Chunk, 64)
 	go func() {
 		defer close(out)
 		var lastFinishReason string
 		for c := range cs.Chunks {
-			if c.Type == ChunkFinish {
+			// Filter lifecycle chunks if requested.
+			if !sendStart && c.Type == ChunkStart {
+				continue
+			}
+			if !sendFinish && c.Type == ChunkFinish {
+				continue
+			}
+
+			if c.Type == ChunkFinish && opts.MessageMetadata != nil {
 				if fr, ok := c.Fields["finishReason"].(string); ok {
 					lastFinishReason = fr
 				}

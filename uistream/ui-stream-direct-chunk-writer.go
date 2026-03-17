@@ -143,3 +143,38 @@ func (wr *Writer) WriteFile(url, mediaType string) {
 		"mediaType": mediaType,
 	}})
 }
+
+// WriteToolInputError emits a tool-input-error chunk when tool argument parsing fails.
+func (wr *Writer) WriteToolInputError(toolCallID, toolName string, input any, errorText string) {
+	WriteSSE(wr.w, Chunk{Type: ChunkToolInputError, Fields: map[string]any{
+		"toolCallId": toolCallID,
+		"toolName":   toolName,
+		"input":      input,
+		"errorText":  errorText,
+	}})
+}
+
+// WriteToolOutputError emits a tool-output-error chunk when tool execution fails.
+func (wr *Writer) WriteToolOutputError(toolCallID, errorText string) {
+	WriteSSE(wr.w, Chunk{Type: ChunkToolOutputError, Fields: map[string]any{
+		"toolCallId": toolCallID,
+		"errorText":  errorText,
+	}})
+}
+
+// WriteToolOutputDenied emits a tool-output-denied chunk when a tool call is rejected.
+func (wr *Writer) WriteToolOutputDenied(toolCallID string) {
+	WriteSSE(wr.w, Chunk{Type: ChunkToolOutputDenied, Fields: map[string]any{
+		"toolCallId": toolCallID,
+	}})
+}
+
+// WriteToolApprovalRequest emits a tool-approval-request chunk for human-in-the-loop flows.
+func (wr *Writer) WriteToolApprovalRequest(approvalID, toolCallID, toolName string, args any) {
+	WriteSSE(wr.w, Chunk{Type: ChunkToolApprovalRequest, Fields: map[string]any{
+		"approvalId": approvalID,
+		"toolCallId": toolCallID,
+		"toolName":   toolName,
+		"args":       args,
+	}})
+}

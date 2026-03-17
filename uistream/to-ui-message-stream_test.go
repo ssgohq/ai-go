@@ -258,6 +258,81 @@ func TestToUIMessageStream_ChannelCloses(t *testing.T) {
 	}
 }
 
+// boolPtr returns a pointer to the given bool value.
+func boolPtr(b bool) *bool { return &b }
+
+// TestToUIMessageStream_SendStartFalse suppresses the start chunk.
+func TestToUIMessageStream_SendStartFalse(t *testing.T) {
+	sr := newMockStreamEventer(
+		engine.StepEvent{Type: engine.StepEventStepStart},
+		engine.StepEvent{Type: engine.StepEventTextDelta, TextDelta: "hi"},
+		engine.StepEvent{Type: engine.StepEventStepEnd, FinishReason: engine.FinishReasonStop},
+		engine.StepEvent{Type: engine.StepEventDone},
+	)
+
+	ch := ToUIMessageStream(sr, "msg-sf1", ToUIStreamOptions{
+		SendReasoning: true,
+		SendSources:   true,
+		SendStart:     boolPtr(false),
+	})
+	chunks := drainChunks(ch)
+
+	if _, ok := findChunk(chunks, ChunkStart); ok {
+		t.Error("expected no start chunk when SendStart=false")
+	}
+	if _, ok := findChunk(chunks, ChunkFinish); !ok {
+		t.Error("expected finish chunk to still be present")
+	}
+}
+
+// TestToUIMessageStream_SendFinishFalse suppresses the finish chunk.
+func TestToUIMessageStream_SendFinishFalse(t *testing.T) {
+	sr := newMockStreamEventer(
+		engine.StepEvent{Type: engine.StepEventStepStart},
+		engine.StepEvent{Type: engine.StepEventTextDelta, TextDelta: "hi"},
+		engine.StepEvent{Type: engine.StepEventStepEnd, FinishReason: engine.FinishReasonStop},
+		engine.StepEvent{Type: engine.StepEventDone},
+	)
+
+	ch := ToUIMessageStream(sr, "msg-sf2", ToUIStreamOptions{
+		SendReasoning: true,
+		SendSources:   true,
+		SendFinish:    boolPtr(false),
+	})
+	chunks := drainChunks(ch)
+
+	if _, ok := findChunk(chunks, ChunkFinish); ok {
+		t.Error("expected no finish chunk when SendFinish=false")
+	}
+	if _, ok := findChunk(chunks, ChunkStart); !ok {
+		t.Error("expected start chunk to still be present")
+	}
+}
+
+// TestToUIMessageStream_DefaultSendStartFinish verifies both are emitted by default.
+func TestToUIMessageStream_DefaultSendStartFinish(t *testing.T) {
+	sr := newMockStreamEventer(
+		engine.StepEvent{Type: engine.StepEventStepStart},
+		engine.StepEvent{Type: engine.StepEventTextDelta, TextDelta: "hi"},
+		engine.StepEvent{Type: engine.StepEventStepEnd, FinishReason: engine.FinishReasonStop},
+		engine.StepEvent{Type: engine.StepEventDone},
+	)
+
+	ch := ToUIMessageStream(sr, "msg-sf3", ToUIStreamOptions{
+		SendReasoning: true,
+		SendSources:   true,
+		// SendStart and SendFinish are nil — default is true
+	})
+	chunks := drainChunks(ch)
+
+	if _, ok := findChunk(chunks, ChunkStart); !ok {
+		t.Error("expected start chunk with default options")
+	}
+	if _, ok := findChunk(chunks, ChunkFinish); !ok {
+		t.Error("expected finish chunk with default options")
+	}
+}
+
 // TestToUIMessageStream_NilMetadataCallback uses default path without metadata.
 func TestToUIMessageStream_NilMetadataCallback(t *testing.T) {
 	sr := newMockStreamEventer(

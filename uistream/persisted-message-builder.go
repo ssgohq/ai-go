@@ -26,6 +26,7 @@ type toolInvocationPart struct {
 	State      string `json:"state"`
 	Input      any    `json:"input,omitempty"`
 	Output     any    `json:"output,omitempty"`
+	ErrorText  string `json:"errorText,omitempty"`
 }
 
 // NewPersistedMessageBuilder creates a new builder.
@@ -73,6 +74,15 @@ func (b *PersistedMessageBuilder) ObserveChunk(c Chunk) {
 
 	case ChunkToolOutputAvailable:
 		b.observeToolOutput(c)
+
+	case ChunkToolInputError:
+		b.observeToolInputError(c)
+
+	case ChunkToolOutputError:
+		b.observeToolOutputError(c)
+
+	case ChunkToolOutputDenied:
+		b.observeToolOutputDenied(c)
 
 	case ChunkSourceURL:
 		b.observeSourceURL(c)
@@ -152,6 +162,66 @@ func (b *PersistedMessageBuilder) observeToolOutput(c Chunk) {
 		"state":      tool.State,
 		"input":      tool.Input,
 		"output":     tool.Output,
+	})
+	delete(b.pendingTool, tcID)
+}
+
+func (b *PersistedMessageBuilder) observeToolInputError(c Chunk) {
+	tcID, _ := c.Fields["toolCallId"].(string)
+	toolName, _ := c.Fields["toolName"].(string)
+	errText, _ := c.Fields["errorText"].(string)
+	if tcID == "" {
+		return
+	}
+	b.parts = append(b.parts, map[string]any{
+		"type":       "tool-invocation",
+		"toolCallId": tcID,
+		"toolName":   toolName,
+		"state":      "error",
+		"input":      c.Fields["input"],
+		"errorText":  errText,
+	})
+	delete(b.pendingTool, tcID)
+}
+
+func (b *PersistedMessageBuilder) observeToolOutputError(c Chunk) {
+	tcID, _ := c.Fields["toolCallId"].(string)
+	errText, _ := c.Fields["errorText"].(string)
+	if tcID == "" {
+		return
+	}
+	tool, exists := b.pendingTool[tcID]
+	if !exists {
+		tool = &toolInvocationPart{ToolCallID: tcID}
+		b.pendingTool[tcID] = tool
+	}
+	b.parts = append(b.parts, map[string]any{
+		"type":       "tool-invocation",
+		"toolCallId": tool.ToolCallID,
+		"toolName":   tool.ToolName,
+		"state":      "error",
+		"input":      tool.Input,
+		"errorText":  errText,
+	})
+	delete(b.pendingTool, tcID)
+}
+
+func (b *PersistedMessageBuilder) observeToolOutputDenied(c Chunk) {
+	tcID, _ := c.Fields["toolCallId"].(string)
+	if tcID == "" {
+		return
+	}
+	tool, exists := b.pendingTool[tcID]
+	if !exists {
+		tool = &toolInvocationPart{ToolCallID: tcID}
+		b.pendingTool[tcID] = tool
+	}
+	b.parts = append(b.parts, map[string]any{
+		"type":       "tool-invocation",
+		"toolCallId": tool.ToolCallID,
+		"toolName":   tool.ToolName,
+		"state":      "denied",
+		"input":      tool.Input,
 	})
 	delete(b.pendingTool, tcID)
 }
