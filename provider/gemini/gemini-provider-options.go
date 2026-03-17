@@ -8,6 +8,20 @@ type ProviderOptions struct {
 
 	// GoogleSearchConfig holds optional search configuration.
 	GoogleSearchConfig *GoogleSearchConfig
+
+	// ThinkingConfig controls the model's thinking/reasoning behavior.
+	ThinkingConfig *ThinkingConfig
+}
+
+// ThinkingConfig controls how the model uses its thinking/reasoning capability.
+// See: https://ai.google.dev/gemini-api/docs/gemini-3?thinking=high#thinking_level
+type ThinkingConfig struct {
+	// ThinkingBudget sets a token budget for thinking. Optional.
+	ThinkingBudget *int `json:"thinkingBudget,omitempty"`
+	// IncludeThoughts controls whether thinking tokens are included in the response.
+	IncludeThoughts *bool `json:"includeThoughts,omitempty"`
+	// ThinkingLevel sets a preset thinking level: "minimal", "low", "medium", "high".
+	ThinkingLevel string `json:"thinkingLevel,omitempty"`
 }
 
 // GoogleSearchConfig contains optional configuration for Google Search grounding.

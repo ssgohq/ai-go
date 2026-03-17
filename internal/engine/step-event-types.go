@@ -82,6 +82,8 @@ type Usage struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+	// ReasoningTokens is the number of tokens used for reasoning/thinking (e.g. Gemini thoughtsTokenCount).
+	ReasoningTokens int
 }
 
 // ToolResult holds the output of a single tool invocation.

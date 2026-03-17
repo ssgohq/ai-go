@@ -10,9 +10,23 @@ import (
 
 const defaultBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
+// googleSearchSupportedModels is an allowlist of Gemini model IDs that support
+// the Google Search grounding tool. Models not in this list will receive a
+// warning and the tool will be omitted.
+//
+// Confirmed: gemini-2.5-pro does NOT support google_search (returns empty stream).
+// Use an allowlist (not blocklist) so new unsupported models are safe by default.
+var googleSearchSupportedModels = map[string]bool{
+	"gemini-2.5-flash":      true,
+	"gemini-2.5-flash-lite": true,
+	"gemini-3-flash-preview": true,
+	"gemini-3-pro-preview":  true,
+}
+
 // LanguageModel implements ai.LanguageModel for the Gemini OpenAI-compatible API.
 type LanguageModel struct {
-	core *openaichat.LanguageModel
+	modelID string
+	core    *openaichat.LanguageModel
 }
 
 // Config holds options for constructing a Gemini LanguageModel or EmbeddingModel.
@@ -39,20 +53,23 @@ func NewLanguageModel(modelID string, cfg Config) *LanguageModel {
 			SupportsStructuredOutput: true,
 			SupportsStreamUsage:      true,
 		},
-		SanitizeTools:        sanitizeToolSchemas,
-		ExtraToolsForRequest: extraToolsForRequest,
+		SanitizeTools: sanitizeToolSchemas,
+		ExtraToolsForRequest: func(req ai.LanguageModelRequest) []map[string]any {
+			return extraToolsForRequest(modelID, req)
+		},
 	})
-	return &LanguageModel{core: core}
+	return &LanguageModel{modelID: modelID, core: core}
 }
 
 // ModelID returns the Gemini model identifier.
 func (m *LanguageModel) ModelID() string { return m.core.ModelID() }
 
 // Stream sends a streaming chat request and returns a channel of normalized ai.StreamEvents.
-// Warnings for unsupported option combinations (e.g. TopK or Seed with Google Search) are
-// injected into the first StreamEventFinish event.
+// Warnings for unsupported option combinations (e.g. TopK or Seed with Google Search,
+// or Google Search used with an unsupported model) are injected into the first
+// StreamEventFinish event.
 func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest) (<-chan ai.StreamEvent, error) {
-	warnings := warningsForRequest(req)
+	warnings := warningsForRequest(m.modelID, req)
 
 	coreCh, err := m.core.Stream(ctx, req)
 	if err != nil {
@@ -80,9 +97,15 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 }
 
 // extraToolsForRequest returns Gemini-specific built-in tools based on provider options.
-func extraToolsForRequest(req ai.LanguageModelRequest) []map[string]any {
+// Google Search is only added when the model supports it (see googleSearchSupportedModels).
+func extraToolsForRequest(modelID string, req ai.LanguageModelRequest) []map[string]any {
 	opts := parseProviderOptions(req.ProviderOptions)
 	if !opts.EnableGoogleSearch {
+		return nil
+	}
+
+	// Skip google_search for models that don't support it.
+	if !googleSearchSupportedModels[modelID] {
 		return nil
 	}
 
@@ -114,15 +137,59 @@ func extraToolsForRequest(req ai.LanguageModelRequest) []map[string]any {
 	return []map[string]any{tool}
 }
 
-// warningsForRequest returns advisory warnings for unsupported option combinations
-// when Google Search grounding is enabled.
-func warningsForRequest(req ai.LanguageModelRequest) []ai.Warning {
+// extraBodyFieldsForRequest returns provider-specific top-level request body fields
+// based on provider options. Currently handles thinkingConfig.
+//
+// NOTE: This function is ready to wire into openaichat.ModelConfig.ExtraBodyFieldsForRequest
+// once that hook is available in the openaichat package.
+func extraBodyFieldsForRequest(req ai.LanguageModelRequest) map[string]any {
+	opts := parseProviderOptions(req.ProviderOptions)
+	if opts.ThinkingConfig == nil {
+		return nil
+	}
+
+	cfg := opts.ThinkingConfig
+	thinkingMap := map[string]any{}
+
+	if cfg.ThinkingBudget != nil {
+		thinkingMap["thinkingBudget"] = *cfg.ThinkingBudget
+	}
+	if cfg.IncludeThoughts != nil {
+		thinkingMap["includeThoughts"] = *cfg.IncludeThoughts
+	}
+	if cfg.ThinkingLevel != "" {
+		thinkingMap["thinkingLevel"] = cfg.ThinkingLevel
+	}
+
+	if len(thinkingMap) == 0 {
+		return nil
+	}
+
+	return map[string]any{
+		"thinkingConfig": thinkingMap,
+	}
+}
+
+// warningsForRequest returns advisory warnings for unsupported option combinations.
+// Warns when Google Search is enabled with unsupported settings (topK, seed)
+// or when Google Search is requested on an unsupported model.
+func warningsForRequest(modelID string, req ai.LanguageModelRequest) []ai.Warning {
 	opts := parseProviderOptions(req.ProviderOptions)
 	if !opts.EnableGoogleSearch {
 		return nil
 	}
 
 	var warnings []ai.Warning
+
+	// Warn if model doesn't support Google Search.
+	if !googleSearchSupportedModels[modelID] {
+		warnings = append(warnings, ai.Warning{
+			Type:    "unsupported-setting",
+			Setting: "enableGoogleSearch",
+			Message: "Google Search grounding is not supported for model " + modelID + " and will be ignored",
+		})
+	}
+
 	if req.Settings.TopK != nil {
 		warnings = append(warnings, ai.Warning{
 			Type:    "unsupported-setting",

@@ -44,6 +44,8 @@ type ChunkProducer struct {
 
 	// lastFinishReason stores the finish reason from the most recent StepEventStepEnd.
 	lastFinishReason string
+	// lastThoughtSignature stores the most recent thought signature from a reasoning delta.
+	lastThoughtSignature string
 }
 
 // NewChunkProducer creates a ChunkProducer with the given message ID.
@@ -130,6 +132,7 @@ func (cp *ChunkProducer) chunksStepStart() []Chunk {
 	cp.textBlockID = blockID(cp.textBlockCount)
 	cp.textStarted = false
 	cp.reasoningStarted = false
+	cp.lastThoughtSignature = ""
 	cp.toolInputStarted = make(map[string]bool)
 	cp.toolArgsAccum = make(map[string]string)
 	return []Chunk{{Type: ChunkStartStep, Fields: nil}}
@@ -153,6 +156,9 @@ func (cp *ChunkProducer) chunksReasoningDelta(ev engine.StepEvent) []Chunk {
 	if !cp.reasoningStarted {
 		out = append(out, Chunk{Type: ChunkReasoningStart, Fields: map[string]any{"id": cp.textBlockID}})
 		cp.reasoningStarted = true
+	}
+	if ev.ThoughtSignature != "" {
+		cp.lastThoughtSignature = ev.ThoughtSignature
 	}
 	out = append(out, Chunk{Type: ChunkReasoningDelta, Fields: map[string]any{
 		"id":    cp.textBlockID,
@@ -233,7 +239,11 @@ func (cp *ChunkProducer) chunksStepEnd() []Chunk {
 		out = append(out, Chunk{Type: ChunkTextEnd, Fields: map[string]any{"id": cp.textBlockID}})
 	}
 	if cp.reasoningStarted {
-		out = append(out, Chunk{Type: ChunkReasoningEnd, Fields: map[string]any{"id": cp.textBlockID}})
+		reasoningEndFields := map[string]any{"id": cp.textBlockID}
+		if cp.lastThoughtSignature != "" {
+			reasoningEndFields["signature"] = cp.lastThoughtSignature
+		}
+		out = append(out, Chunk{Type: ChunkReasoningEnd, Fields: reasoningEndFields})
 	}
 	out = append(out, Chunk{Type: ChunkFinishStep, Fields: nil})
 	return out

@@ -86,8 +86,14 @@ func handleUsage(ev engine.StepEvent, result *GenerateTextResult, step *StepOutp
 	result.TotalUsage.PromptTokens += ev.Usage.PromptTokens
 	result.TotalUsage.CompletionTokens += ev.Usage.CompletionTokens
 	result.TotalUsage.TotalTokens += ev.Usage.TotalTokens
+	result.TotalUsage.ReasoningTokens += ev.Usage.ReasoningTokens
 	if step != nil {
-		step.Usage = Usage(*ev.Usage)
+		step.Usage = Usage{
+			PromptTokens:     ev.Usage.PromptTokens,
+			CompletionTokens: ev.Usage.CompletionTokens,
+			TotalTokens:      ev.Usage.TotalTokens,
+			ReasoningTokens:  ev.Usage.ReasoningTokens,
+		}
 	}
 }
 
@@ -262,6 +268,7 @@ func toEngineStreamEvent(ev StreamEvent) engine.StreamEvent {
 			PromptTokens:     ev.Usage.PromptTokens,
 			CompletionTokens: ev.Usage.CompletionTokens,
 			TotalTokens:      ev.Usage.TotalTokens,
+			ReasoningTokens:  ev.Usage.ReasoningTokens,
 		}
 	}
 	if len(ev.Warnings) > 0 {
