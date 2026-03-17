@@ -38,6 +38,10 @@ type ModelConfig struct {
 	// tool entries per request (e.g. {"type": "google_search"} for Gemini grounding).
 	// Called with the current ai.LanguageModelRequest; may return nil.
 	ExtraToolsForRequest func(req ai.LanguageModelRequest) []map[string]any
+	// ExtraBodyFieldsForRequest is an optional hook to supply additional top-level
+	// request body fields per request (e.g. thinkingConfig for Gemini).
+	// Returned map keys are merged into the JSON body before sending.
+	ExtraBodyFieldsForRequest func(req ai.LanguageModelRequest) map[string]any
 	// MetadataExtractor is an optional hook to extract provider metadata from SSE chunks.
 	MetadataExtractor func(chunk StreamChunk) map[string]any
 }
@@ -79,14 +83,25 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 		return nil, fmt.Errorf("%s: encode request: %w", m.cfg.ProviderName, err)
 	}
 
+	// Merge provider-specific extra body fields (e.g. thinkingConfig).
+	var extraFields map[string]any
+	if m.cfg.ExtraBodyFieldsForRequest != nil {
+		extraFields = m.cfg.ExtraBodyFieldsForRequest(req)
+	}
+
 	var body []byte
-	if m.cfg.TransformRequestBody != nil {
-		// Marshal to map, apply transform, then re-marshal so extra fields survive.
+	if extraFields != nil || m.cfg.TransformRequestBody != nil {
+		// Marshal to map so extra fields and transforms can be merged.
 		rawMap, mapErr := structToMap(cr)
 		if mapErr != nil {
 			return nil, fmt.Errorf("%s: marshal request to map: %w", m.cfg.ProviderName, mapErr)
 		}
-		rawMap = m.cfg.TransformRequestBody(rawMap)
+		for k, v := range extraFields {
+			rawMap[k] = v
+		}
+		if m.cfg.TransformRequestBody != nil {
+			rawMap = m.cfg.TransformRequestBody(rawMap)
+		}
 		body, err = json.Marshal(rawMap)
 	} else {
 		body, err = json.Marshal(cr)

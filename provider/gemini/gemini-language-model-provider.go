@@ -57,6 +57,7 @@ func NewLanguageModel(modelID string, cfg Config) *LanguageModel {
 		ExtraToolsForRequest: func(req ai.LanguageModelRequest) []map[string]any {
 			return extraToolsForRequest(modelID, req)
 		},
+		ExtraBodyFieldsForRequest: extraBodyFieldsForRequest,
 	})
 	return &LanguageModel{modelID: modelID, core: core}
 }
