@@ -144,6 +144,70 @@ func TestToGenerateTextRequestFromRegistry_UnknownPrefix(t *testing.T) {
 	}
 }
 
+func TestChatRequestEnvelope_TriggerAndMessageID_RoundTrip(t *testing.T) {
+	env := uistream.ChatRequestEnvelope{
+		ID:        "sess-1",
+		Trigger:   "regenerate-message",
+		MessageID: "msg-regen-42",
+		Messages: []uistream.EnvelopeMessage{
+			{Role: "user", Content: "Hi", Metadata: map[string]any{"clientTime": "12:00"}},
+		},
+	}
+
+	if env.ID != "sess-1" {
+		t.Errorf("ID: got %q, want %q", env.ID, "sess-1")
+	}
+	if env.Trigger != "regenerate-message" {
+		t.Errorf("Trigger: got %q, want %q", env.Trigger, "regenerate-message")
+	}
+	if env.MessageID != "msg-regen-42" {
+		t.Errorf("MessageID: got %q, want %q", env.MessageID, "msg-regen-42")
+	}
+	meta, ok := env.Messages[0].Metadata["clientTime"]
+	if !ok || meta != "12:00" {
+		t.Errorf("per-message metadata: got %v", env.Messages[0].Metadata)
+	}
+}
+
+func TestResolveMessageIDFromEnvelope_PrefersEnvelopeMessageID(t *testing.T) {
+	env := uistream.ChatRequestEnvelope{
+		MessageID: "explicit-msg-id",
+		Messages: []uistream.EnvelopeMessage{
+			{Role: "assistant", ID: "last-assistant-id"},
+		},
+	}
+	got := uistream.ResolveMessageIDFromEnvelope(env, "fallback-id")
+	if got != "explicit-msg-id" {
+		t.Errorf("expected explicit MessageID to win, got %q", got)
+	}
+}
+
+func TestResolveMessageIDFromEnvelope_FallsBackToLastAssistant(t *testing.T) {
+	env := uistream.ChatRequestEnvelope{
+		// MessageID not set
+		Messages: []uistream.EnvelopeMessage{
+			{Role: "user", Content: "hi"},
+			{Role: "assistant", ID: "asst-msg-99"},
+		},
+	}
+	got := uistream.ResolveMessageIDFromEnvelope(env, "fallback-id")
+	if got != "asst-msg-99" {
+		t.Errorf("expected last assistant ID, got %q", got)
+	}
+}
+
+func TestResolveMessageIDFromEnvelope_FallbackWhenNeitherSet(t *testing.T) {
+	env := uistream.ChatRequestEnvelope{
+		Messages: []uistream.EnvelopeMessage{
+			{Role: "user", Content: "hi"},
+		},
+	}
+	got := uistream.ResolveMessageIDFromEnvelope(env, "generated-id")
+	if got != "generated-id" {
+		t.Errorf("expected fallback, got %q", got)
+	}
+}
+
 func TestToGenerateTextRequest_MessageParts(t *testing.T) {
 	env := uistream.ChatRequestEnvelope{
 		Messages: []uistream.EnvelopeMessage{

@@ -126,20 +126,139 @@ func (wr *Writer) WriteSourceURL(sourceID, url, title string) {
 	}})
 }
 
+// SourceDocumentOpts carries optional v6 fields for source-document chunks.
+type SourceDocumentOpts struct {
+	Filename         string
+	Data             []byte
+	ProviderMetadata map[string]any
+}
+
 // WriteSourceDocument emits a structured source-document chunk.
-func (wr *Writer) WriteSourceDocument(sourceID, mediaType, title, filename string) {
-	WriteSSE(wr.w, Chunk{Type: ChunkSourceDocument, Fields: map[string]any{
+// opts may be nil for backward-compatible callers.
+func (wr *Writer) WriteSourceDocument(sourceID, mediaType, title string, opts *SourceDocumentOpts) {
+	fields := map[string]any{
 		"sourceId":  sourceID,
 		"mediaType": mediaType,
 		"title":     title,
-		"filename":  filename,
-	}})
+	}
+	if opts != nil {
+		if opts.Filename != "" {
+			fields["filename"] = opts.Filename
+		}
+		if opts.Data != nil {
+			fields["data"] = opts.Data
+		}
+		fields = withProviderMetadata(fields, opts.ProviderMetadata)
+	}
+	WriteSSE(wr.w, Chunk{Type: ChunkSourceDocument, Fields: fields})
+}
+
+// FileChunkOpts carries optional v6 fields for file chunks.
+type FileChunkOpts struct {
+	ID               string
+	FileID           string
+	Data             []byte
+	Name             string
+	ProviderMetadata map[string]any
 }
 
 // WriteFile emits a file chunk for assistant-provided files.
-func (wr *Writer) WriteFile(url, mediaType string) {
-	WriteSSE(wr.w, Chunk{Type: ChunkFile, Fields: map[string]any{
+// opts may be nil for backward-compatible callers.
+func (wr *Writer) WriteFile(url, mediaType string, opts *FileChunkOpts) {
+	fields := map[string]any{
 		"url":       url,
 		"mediaType": mediaType,
+	}
+	if opts != nil {
+		if opts.ID != "" {
+			fields["id"] = opts.ID
+		}
+		if opts.FileID != "" {
+			fields["fileId"] = opts.FileID
+		}
+		if opts.Data != nil {
+			fields["data"] = opts.Data
+		}
+		if opts.Name != "" {
+			fields["name"] = opts.Name
+		}
+		fields = withProviderMetadata(fields, opts.ProviderMetadata)
+	}
+	WriteSSE(wr.w, Chunk{Type: ChunkFile, Fields: fields})
+}
+
+// ToolChunkOpts carries optional v6 fields for tool-related chunks.
+type ToolChunkOpts struct {
+	ProviderExecuted *bool
+	Dynamic          *bool
+	Title            string
+	Preliminary      *bool // only meaningful on tool-output-available
+}
+
+// applyToolOpts merges non-nil ToolChunkOpts fields into the given fields map.
+func applyToolOpts(fields map[string]any, opts *ToolChunkOpts) map[string]any {
+	if opts == nil {
+		return fields
+	}
+	if opts.ProviderExecuted != nil {
+		fields["providerExecuted"] = *opts.ProviderExecuted
+	}
+	if opts.Dynamic != nil {
+		fields["dynamic"] = *opts.Dynamic
+	}
+	if opts.Title != "" {
+		fields["title"] = opts.Title
+	}
+	if opts.Preliminary != nil {
+		fields["preliminary"] = *opts.Preliminary
+	}
+	return fields
+}
+
+// WriteToolInputError emits a tool-input-error chunk when tool argument parsing fails.
+// opts may be nil.
+func (wr *Writer) WriteToolInputError(toolCallID, toolName string, input any, errorText string, opts *ToolChunkOpts) {
+	fields := applyToolOpts(map[string]any{
+		"toolCallId": toolCallID,
+		"toolName":   toolName,
+		"input":      input,
+		"errorText":  errorText,
+	}, opts)
+	WriteSSE(wr.w, Chunk{Type: ChunkToolInputError, Fields: fields})
+}
+
+// WriteToolOutputError emits a tool-output-error chunk when tool execution fails.
+// opts may be nil.
+func (wr *Writer) WriteToolOutputError(toolCallID, errorText string, opts *ToolChunkOpts) {
+	fields := applyToolOpts(map[string]any{
+		"toolCallId": toolCallID,
+		"errorText":  errorText,
+	}, opts)
+	WriteSSE(wr.w, Chunk{Type: ChunkToolOutputError, Fields: fields})
+}
+
+// WriteToolOutputDenied emits a tool-output-denied chunk when a tool call is rejected.
+// opts may be nil.
+func (wr *Writer) WriteToolOutputDenied(toolCallID string, opts *ToolChunkOpts) {
+	fields := applyToolOpts(map[string]any{
+		"toolCallId": toolCallID,
+	}, opts)
+	WriteSSE(wr.w, Chunk{Type: ChunkToolOutputDenied, Fields: fields})
+}
+
+// WriteToolApprovalRequest emits a tool-approval-request chunk for human-in-the-loop flows.
+func (wr *Writer) WriteToolApprovalRequest(approvalID, toolCallID, toolName string, args any) {
+	WriteSSE(wr.w, Chunk{Type: ChunkToolApprovalRequest, Fields: map[string]any{
+		"approvalId": approvalID,
+		"toolCallId": toolCallID,
+		"toolName":   toolName,
+		"args":       args,
 	}})
+}
+
+// WriteChunkWithProviderMetadata emits a named chunk with arbitrary fields plus
+// optional provider-specific metadata. When providerMeta is nil, the
+// providerMetadata key is omitted from the output entirely.
+func (wr *Writer) WriteChunkWithProviderMetadata(typ string, fields, providerMeta map[string]any) {
+	WriteSSE(wr.w, Chunk{Type: typ, Fields: withProviderMetadata(fields, providerMeta)})
 }

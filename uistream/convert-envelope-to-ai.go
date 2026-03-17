@@ -50,7 +50,31 @@ func ToAIContentParts(parts []EnvelopePartUnion) []ai.ContentPart {
 				cp.Filename = p.Name
 				out = append(out, cp)
 			}
+		case EnvelopePartTypeToolInvocation:
+			out = append(out, toolInvocationParts(p)...)
 		}
 	}
 	return out
+}
+
+// toolInvocationParts converts a tool-invocation EnvelopePartUnion into the
+// corresponding ai.ContentPart(s). Only finalized states ("call", "result")
+// produce parts; partial/unknown states are silently skipped.
+//
+// For state "result", both a ToolCallPart (for assistant context) and a
+// ToolResultPart (for tool-role context) are emitted. Callers that need role
+// separation should filter by ContentPartType after conversion.
+func toolInvocationParts(p EnvelopePartUnion) []ai.ContentPart {
+	switch p.State {
+	case "call", "partial-call":
+		return []ai.ContentPart{ai.ToolCallPart(p.ToolCallID, p.ToolName, p.Input)}
+	case "result":
+		return []ai.ContentPart{
+			ai.ToolCallPart(p.ToolCallID, p.ToolName, p.Input),
+			ai.ToolResultPart(p.ToolCallID, p.ToolName, p.Output),
+		}
+	default:
+		// "error" and unknown states: skip gracefully.
+		return nil
+	}
 }

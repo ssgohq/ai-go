@@ -34,11 +34,20 @@ func TestChunkConstants_FrozenContractCoverage(t *testing.T) {
 		ChunkToolInputDelta,
 		ChunkToolInputAvailable,
 		ChunkToolOutputAvailable,
+		ChunkToolInputError,
+		ChunkToolOutputError,
+		ChunkToolOutputDenied,
+		ChunkToolApprovalRequest,
 		ChunkFinishStep,
 		ChunkFinish,
 		ChunkError,
 		ChunkSource,
 		ChunkSources,
+		ChunkSourceURL,
+		ChunkSourceDocument,
+		ChunkFile,
+		ChunkAbort,
+		ChunkMessageMetadata,
 	}
 
 	// Verify each constant has the expected wire string value.
@@ -55,11 +64,20 @@ func TestChunkConstants_FrozenContractCoverage(t *testing.T) {
 		ChunkToolInputDelta:      "tool-input-delta",
 		ChunkToolInputAvailable:  "tool-input-available",
 		ChunkToolOutputAvailable: "tool-output-available",
+		ChunkToolInputError:      "tool-input-error",
+		ChunkToolOutputError:     "tool-output-error",
+		ChunkToolOutputDenied:    "tool-output-denied",
+		ChunkToolApprovalRequest: "tool-approval-request",
 		ChunkFinishStep:          "finish-step",
 		ChunkFinish:              "finish",
 		ChunkError:               "error",
 		ChunkSource:              "source",
 		ChunkSources:             "sources",
+		ChunkSourceURL:           "source-url",
+		ChunkSourceDocument:      "source-document",
+		ChunkFile:                "file",
+		ChunkAbort:               "abort",
+		ChunkMessageMetadata:     "message-metadata",
 	}
 
 	for _, c := range required {
@@ -90,6 +108,10 @@ func TestWriter_ChunkTypeInSSEPayload(t *testing.T) {
 		ChunkToolInputDelta,
 		ChunkToolInputAvailable,
 		ChunkToolOutputAvailable,
+		ChunkToolInputError,
+		ChunkToolOutputError,
+		ChunkToolOutputDenied,
+		ChunkToolApprovalRequest,
 		ChunkFinishStep,
 		ChunkFinish,
 		ChunkError,
@@ -209,4 +231,136 @@ func TestWriter_WriteSources_BatchShape(t *testing.T) {
 	if !strings.Contains(output, `"sources":`) {
 		t.Errorf("WriteSources: expected sources array\ngot: %s", output)
 	}
+}
+
+// TestWriter_WriteSourceDocument_V6Fields verifies filename, data, providerMetadata appear.
+func TestWriter_WriteSourceDocument_V6Fields(t *testing.T) {
+	output := captureWriterOutput(func(w *Writer) {
+		w.WriteSourceDocument("src-1", "application/pdf", "My Doc", &SourceDocumentOpts{
+			Filename:         "report.pdf",
+			Data:             []byte("pdfcontent"),
+			ProviderMetadata: map[string]any{"provider": "test"},
+		})
+	})
+	if !strings.Contains(output, `"type":"source-document"`) {
+		t.Errorf("WriteSourceDocument: expected type=source-document\ngot: %s", output)
+	}
+	if !strings.Contains(output, `"filename":"report.pdf"`) {
+		t.Errorf("WriteSourceDocument: expected filename\ngot: %s", output)
+	}
+	if !strings.Contains(output, `"providerMetadata"`) {
+		t.Errorf("WriteSourceDocument: expected providerMetadata\ngot: %s", output)
+	}
+}
+
+// TestWriter_WriteSourceDocument_NilOpts verifies nil opts emits basic fields only.
+func TestWriter_WriteSourceDocument_NilOpts(t *testing.T) {
+	output := captureWriterOutput(func(w *Writer) {
+		w.WriteSourceDocument("src-2", "text/plain", "Bare Doc", nil)
+	})
+	if !strings.Contains(output, `"type":"source-document"`) {
+		t.Errorf("WriteSourceDocument nil opts: expected type\ngot: %s", output)
+	}
+	if strings.Contains(output, `"filename"`) {
+		t.Errorf("WriteSourceDocument nil opts: unexpected filename field\ngot: %s", output)
+	}
+}
+
+// TestWriter_WriteFile_V6Fields verifies id, fileId, data, name, providerMetadata appear.
+func TestWriter_WriteFile_V6Fields(t *testing.T) {
+	output := captureWriterOutput(func(w *Writer) {
+		w.WriteFile("https://cdn.example.com/f.png", "image/png", &FileChunkOpts{
+			ID:               "file-id-1",
+			FileID:           "fid-42",
+			Data:             []byte("imgdata"),
+			Name:             "photo.png",
+			ProviderMetadata: map[string]any{"bucket": "s3"},
+		})
+	})
+	if !strings.Contains(output, `"type":"file"`) {
+		t.Errorf("WriteFile: expected type=file\ngot: %s", output)
+	}
+	if !strings.Contains(output, `"id":"file-id-1"`) {
+		t.Errorf("WriteFile: expected id\ngot: %s", output)
+	}
+	if !strings.Contains(output, `"fileId":"fid-42"`) {
+		t.Errorf("WriteFile: expected fileId\ngot: %s", output)
+	}
+	if !strings.Contains(output, `"name":"photo.png"`) {
+		t.Errorf("WriteFile: expected name\ngot: %s", output)
+	}
+	if !strings.Contains(output, `"providerMetadata"`) {
+		t.Errorf("WriteFile: expected providerMetadata\ngot: %s", output)
+	}
+}
+
+// TestWriter_WriteFile_NilOpts verifies nil opts emits only url and mediaType.
+func TestWriter_WriteFile_NilOpts(t *testing.T) {
+	output := captureWriterOutput(func(w *Writer) {
+		w.WriteFile("https://cdn.example.com/f.png", "image/png", nil)
+	})
+	if !strings.Contains(output, `"type":"file"`) {
+		t.Errorf("WriteFile nil opts: expected type\ngot: %s", output)
+	}
+	if strings.Contains(output, `"id"`) || strings.Contains(output, `"fileId"`) {
+		t.Errorf("WriteFile nil opts: unexpected id/fileId fields\ngot: %s", output)
+	}
+}
+
+// TestWriter_ToolChunkOpts_ProviderExecuted verifies bool fields appear in tool error/denied chunks.
+func TestWriter_ToolChunkOpts_ProviderExecuted(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+
+	t.Run("WriteToolInputError with opts", func(t *testing.T) {
+		output := captureWriterOutput(func(w *Writer) {
+			w.WriteToolInputError("tc-1", "myTool", nil, "bad input", &ToolChunkOpts{
+				ProviderExecuted: &boolTrue,
+				Dynamic:          &boolFalse,
+				Title:            "My Tool",
+			})
+		})
+		if !strings.Contains(output, `"providerExecuted":true`) {
+			t.Errorf("WriteToolInputError opts: expected providerExecuted\ngot: %s", output)
+		}
+		if !strings.Contains(output, `"dynamic":false`) {
+			t.Errorf("WriteToolInputError opts: expected dynamic\ngot: %s", output)
+		}
+		if !strings.Contains(output, `"title":"My Tool"`) {
+			t.Errorf("WriteToolInputError opts: expected title\ngot: %s", output)
+		}
+	})
+
+	t.Run("WriteToolOutputError with opts", func(t *testing.T) {
+		output := captureWriterOutput(func(w *Writer) {
+			w.WriteToolOutputError("tc-2", "exec failed", &ToolChunkOpts{
+				ProviderExecuted: &boolTrue,
+			})
+		})
+		if !strings.Contains(output, `"providerExecuted":true`) {
+			t.Errorf("WriteToolOutputError opts: expected providerExecuted\ngot: %s", output)
+		}
+	})
+
+	t.Run("WriteToolOutputDenied with opts", func(t *testing.T) {
+		output := captureWriterOutput(func(w *Writer) {
+			w.WriteToolOutputDenied("tc-3", &ToolChunkOpts{Dynamic: &boolTrue})
+		})
+		if !strings.Contains(output, `"dynamic":true`) {
+			t.Errorf("WriteToolOutputDenied opts: expected dynamic\ngot: %s", output)
+		}
+	})
+
+	t.Run("WriteToolOutputAvailable preliminary via WriteChunk", func(t *testing.T) {
+		output := captureWriterOutput(func(w *Writer) {
+			w.WriteChunk(ChunkToolOutputAvailable, map[string]any{
+				"toolCallId":  "tc-4",
+				"output":      "result",
+				"preliminary": true,
+			})
+		})
+		if !strings.Contains(output, `"preliminary":true`) {
+			t.Errorf("WriteChunk tool-output-available: expected preliminary\ngot: %s", output)
+		}
+	})
 }

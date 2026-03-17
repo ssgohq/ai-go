@@ -26,6 +26,7 @@ type toolInvocationPart struct {
 	State      string `json:"state"`
 	Input      any    `json:"input,omitempty"`
 	Output     any    `json:"output,omitempty"`
+	ErrorText  string `json:"errorText,omitempty"`
 }
 
 // NewPersistedMessageBuilder creates a new builder.
@@ -39,59 +40,77 @@ func NewPersistedMessageBuilder() *PersistedMessageBuilder {
 func (b *PersistedMessageBuilder) ObserveChunk(c Chunk) {
 	switch c.Type {
 	case ChunkTextStart:
-		b.textAccum.Reset()
-
+		b.observeTextStart()
 	case ChunkTextDelta:
-		if delta, ok := c.Fields["delta"].(string); ok {
-			b.textAccum.WriteString(delta)
-		}
-
+		b.observeTextDelta(c)
 	case ChunkTextEnd:
-		text := b.textAccum.String()
-		if text != "" {
-			b.parts = append(b.parts, map[string]any{"type": "text", "text": text})
-			b.textAccum.Reset()
-		}
-
+		b.observeTextEnd()
 	case ChunkReasoningStart:
-		b.reasoningAccum.Reset()
-		b.lastSignature = ""
-
+		b.observeReasoningStart()
 	case ChunkReasoningDelta:
-		if delta, ok := c.Fields["delta"].(string); ok {
-			b.reasoningAccum.WriteString(delta)
-		}
-		if sig, ok := c.Fields["signature"].(string); ok && sig != "" {
-			b.lastSignature = sig
-		}
-
+		b.observeReasoningDelta(c)
 	case ChunkReasoningEnd:
 		b.observeReasoningEnd(c)
-
 	case ChunkToolInputAvailable:
 		b.observeToolInput(c)
-
 	case ChunkToolOutputAvailable:
 		b.observeToolOutput(c)
-
+	case ChunkToolInputError:
+		b.observeToolInputError(c)
+	case ChunkToolOutputError:
+		b.observeToolOutputError(c)
+	case ChunkToolOutputDenied:
+		b.observeToolOutputDenied(c)
 	case ChunkSourceURL:
 		b.observeSourceURL(c)
-
 	case ChunkSourceDocument:
 		b.observeSourceDocument(c)
-
 	case ChunkFile:
 		b.observeFile(c)
-
 	case ChunkMessageMetadata:
-		if meta := c.Fields["messageMetadata"]; meta != nil {
-			if raw, err := json.Marshal(meta); err == nil {
-				b.metadata = raw
-			}
-		}
-
+		b.observeMessageMetadata(c)
 	default:
 		b.observeDataChunk(c)
+	}
+}
+
+func (b *PersistedMessageBuilder) observeTextStart() {
+	b.textAccum.Reset()
+}
+
+func (b *PersistedMessageBuilder) observeTextDelta(c Chunk) {
+	if delta, ok := c.Fields["delta"].(string); ok {
+		b.textAccum.WriteString(delta)
+	}
+}
+
+func (b *PersistedMessageBuilder) observeTextEnd() {
+	text := b.textAccum.String()
+	if text != "" {
+		b.parts = append(b.parts, map[string]any{"type": "text", "text": text})
+		b.textAccum.Reset()
+	}
+}
+
+func (b *PersistedMessageBuilder) observeReasoningStart() {
+	b.reasoningAccum.Reset()
+	b.lastSignature = ""
+}
+
+func (b *PersistedMessageBuilder) observeReasoningDelta(c Chunk) {
+	if delta, ok := c.Fields["delta"].(string); ok {
+		b.reasoningAccum.WriteString(delta)
+	}
+	if sig, ok := c.Fields["signature"].(string); ok && sig != "" {
+		b.lastSignature = sig
+	}
+}
+
+func (b *PersistedMessageBuilder) observeMessageMetadata(c Chunk) {
+	if meta := c.Fields["messageMetadata"]; meta != nil {
+		if raw, err := json.Marshal(meta); err == nil {
+			b.metadata = raw
+		}
 	}
 }
 
@@ -145,14 +164,88 @@ func (b *PersistedMessageBuilder) observeToolOutput(c Chunk) {
 	}
 	tool.Output = output
 	tool.State = "output-available"
-	b.parts = append(b.parts, map[string]any{
+	part := map[string]any{
 		"type":       "tool-invocation",
 		"toolCallId": tool.ToolCallID,
 		"toolName":   tool.ToolName,
 		"state":      tool.State,
 		"input":      tool.Input,
 		"output":     tool.Output,
-	})
+	}
+	applyV6ToolFields(part, c.Fields)
+	b.parts = append(b.parts, part)
+	delete(b.pendingTool, tcID)
+}
+
+func (b *PersistedMessageBuilder) observeToolInputError(c Chunk) {
+	tcID, ok1 := c.Fields["toolCallId"].(string)
+	toolName, ok2 := c.Fields["toolName"].(string)
+	errText, ok3 := c.Fields["errorText"].(string)
+	_ = ok1
+	_ = ok2
+	_ = ok3
+	if tcID == "" {
+		return
+	}
+	part := map[string]any{
+		"type":       "tool-invocation",
+		"toolCallId": tcID,
+		"toolName":   toolName,
+		"state":      "error",
+		"input":      c.Fields["input"],
+		"errorText":  errText,
+	}
+	applyV6ToolFields(part, c.Fields)
+	b.parts = append(b.parts, part)
+	delete(b.pendingTool, tcID)
+}
+
+func (b *PersistedMessageBuilder) observeToolOutputError(c Chunk) {
+	tcID, ok1 := c.Fields["toolCallId"].(string)
+	errText, ok2 := c.Fields["errorText"].(string)
+	_ = ok1
+	_ = ok2
+	if tcID == "" {
+		return
+	}
+	tool, exists := b.pendingTool[tcID]
+	if !exists {
+		tool = &toolInvocationPart{ToolCallID: tcID}
+		b.pendingTool[tcID] = tool
+	}
+	part := map[string]any{
+		"type":       "tool-invocation",
+		"toolCallId": tool.ToolCallID,
+		"toolName":   tool.ToolName,
+		"state":      "error",
+		"input":      tool.Input,
+		"errorText":  errText,
+	}
+	applyV6ToolFields(part, c.Fields)
+	b.parts = append(b.parts, part)
+	delete(b.pendingTool, tcID)
+}
+
+func (b *PersistedMessageBuilder) observeToolOutputDenied(c Chunk) {
+	tcID, ok := c.Fields["toolCallId"].(string)
+	_ = ok
+	if tcID == "" {
+		return
+	}
+	tool, exists := b.pendingTool[tcID]
+	if !exists {
+		tool = &toolInvocationPart{ToolCallID: tcID}
+		b.pendingTool[tcID] = tool
+	}
+	part := map[string]any{
+		"type":       "tool-invocation",
+		"toolCallId": tool.ToolCallID,
+		"toolName":   tool.ToolName,
+		"state":      "denied",
+		"input":      tool.Input,
+	}
+	applyV6ToolFields(part, c.Fields)
+	b.parts = append(b.parts, part)
 	delete(b.pendingTool, tcID)
 }
 
@@ -175,21 +268,57 @@ func (b *PersistedMessageBuilder) observeSourceDocument(c Chunk) {
 	_ = ok1
 	_ = ok2
 	_ = ok3
-	b.parts = append(b.parts, map[string]any{
+	part := map[string]any{
 		"type": "source-document", "id": id, "title": title, "mediaType": mediaType,
-	})
+	}
+	if fn, ok := c.Fields["filename"].(string); ok && fn != "" {
+		part["filename"] = fn
+	}
+	if data := c.Fields["data"]; data != nil {
+		part["data"] = data
+	}
+	if pm := c.Fields["providerMetadata"]; pm != nil {
+		part["providerMetadata"] = pm
+	}
+	b.parts = append(b.parts, part)
 }
 
 func (b *PersistedMessageBuilder) observeFile(c Chunk) {
-	url, ok1 := c.Fields["url"].(string)
-	mediaType, ok2 := c.Fields["mediaType"].(string)
-	name, ok3 := c.Fields["name"].(string)
-	_ = ok1
-	_ = ok2
-	_ = ok3
-	b.parts = append(b.parts, map[string]any{
-		"type": "file", "url": url, "mediaType": mediaType, "name": name,
-	})
+	part := map[string]any{"type": "file"}
+	for _, key := range []string{"url", "mediaType", "name", "id", "fileId"} {
+		if v, ok := c.Fields[key].(string); ok && v != "" {
+			part[key] = v
+		}
+	}
+	if data := c.Fields["data"]; data != nil {
+		part["data"] = data
+	}
+	if pm := c.Fields["providerMetadata"]; pm != nil {
+		part["providerMetadata"] = pm
+	}
+	b.parts = append(b.parts, part)
+}
+
+// copyOptionalBool copies a bool field from src to dst if present.
+func copyOptionalBool(dst, src map[string]any, key string) {
+	if v, ok := src[key].(bool); ok {
+		dst[key] = v
+	}
+}
+
+// copyOptionalString copies a non-empty string field from src to dst if present.
+func copyOptionalString(dst, src map[string]any, key string) {
+	if v, ok := src[key].(string); ok && v != "" {
+		dst[key] = v
+	}
+}
+
+// applyV6ToolFields copies optional v6 bool/string fields from a chunk into a part map.
+func applyV6ToolFields(part, fields map[string]any) {
+	copyOptionalBool(part, fields, "providerExecuted")
+	copyOptionalBool(part, fields, "dynamic")
+	copyOptionalBool(part, fields, "preliminary")
+	copyOptionalString(part, fields, "title")
 }
 
 func (b *PersistedMessageBuilder) observeDataChunk(c Chunk) {
