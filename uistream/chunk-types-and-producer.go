@@ -294,7 +294,7 @@ func isValidJSON(s string) bool {
 
 // withProviderMetadata attaches providerMetadata to a Fields map when pm is non-nil.
 // Returns the (possibly newly allocated) map.
-func withProviderMetadata(fields map[string]any, pm map[string]any) map[string]any {
+func withProviderMetadata(fields, pm map[string]any) map[string]any {
 	if pm == nil {
 		return fields
 	}

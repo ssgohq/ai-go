@@ -164,14 +164,16 @@ func (b *PersistedMessageBuilder) observeToolOutput(c Chunk) {
 	}
 	tool.Output = output
 	tool.State = "output-available"
-	b.parts = append(b.parts, map[string]any{
+	part := map[string]any{
 		"type":       "tool-invocation",
 		"toolCallId": tool.ToolCallID,
 		"toolName":   tool.ToolName,
 		"state":      tool.State,
 		"input":      tool.Input,
 		"output":     tool.Output,
-	})
+	}
+	applyV6ToolFields(part, c.Fields)
+	b.parts = append(b.parts, part)
 	delete(b.pendingTool, tcID)
 }
 
@@ -185,14 +187,16 @@ func (b *PersistedMessageBuilder) observeToolInputError(c Chunk) {
 	if tcID == "" {
 		return
 	}
-	b.parts = append(b.parts, map[string]any{
+	part := map[string]any{
 		"type":       "tool-invocation",
 		"toolCallId": tcID,
 		"toolName":   toolName,
 		"state":      "error",
 		"input":      c.Fields["input"],
 		"errorText":  errText,
-	})
+	}
+	applyV6ToolFields(part, c.Fields)
+	b.parts = append(b.parts, part)
 	delete(b.pendingTool, tcID)
 }
 
@@ -209,14 +213,16 @@ func (b *PersistedMessageBuilder) observeToolOutputError(c Chunk) {
 		tool = &toolInvocationPart{ToolCallID: tcID}
 		b.pendingTool[tcID] = tool
 	}
-	b.parts = append(b.parts, map[string]any{
+	part := map[string]any{
 		"type":       "tool-invocation",
 		"toolCallId": tool.ToolCallID,
 		"toolName":   tool.ToolName,
 		"state":      "error",
 		"input":      tool.Input,
 		"errorText":  errText,
-	})
+	}
+	applyV6ToolFields(part, c.Fields)
+	b.parts = append(b.parts, part)
 	delete(b.pendingTool, tcID)
 }
 
@@ -231,13 +237,15 @@ func (b *PersistedMessageBuilder) observeToolOutputDenied(c Chunk) {
 		tool = &toolInvocationPart{ToolCallID: tcID}
 		b.pendingTool[tcID] = tool
 	}
-	b.parts = append(b.parts, map[string]any{
+	part := map[string]any{
 		"type":       "tool-invocation",
 		"toolCallId": tool.ToolCallID,
 		"toolName":   tool.ToolName,
 		"state":      "denied",
 		"input":      tool.Input,
-	})
+	}
+	applyV6ToolFields(part, c.Fields)
+	b.parts = append(b.parts, part)
 	delete(b.pendingTool, tcID)
 }
 
@@ -254,27 +262,60 @@ func (b *PersistedMessageBuilder) observeSourceURL(c Chunk) {
 }
 
 func (b *PersistedMessageBuilder) observeSourceDocument(c Chunk) {
-	id, ok1 := c.Fields["sourceId"].(string)
-	title, ok2 := c.Fields["title"].(string)
-	mediaType, ok3 := c.Fields["mediaType"].(string)
-	_ = ok1
-	_ = ok2
-	_ = ok3
-	b.parts = append(b.parts, map[string]any{
+	id, _ := c.Fields["sourceId"].(string)
+	title, _ := c.Fields["title"].(string)
+	mediaType, _ := c.Fields["mediaType"].(string)
+	part := map[string]any{
 		"type": "source-document", "id": id, "title": title, "mediaType": mediaType,
-	})
+	}
+	if fn, ok := c.Fields["filename"].(string); ok && fn != "" {
+		part["filename"] = fn
+	}
+	if data := c.Fields["data"]; data != nil {
+		part["data"] = data
+	}
+	if pm := c.Fields["providerMetadata"]; pm != nil {
+		part["providerMetadata"] = pm
+	}
+	b.parts = append(b.parts, part)
 }
 
 func (b *PersistedMessageBuilder) observeFile(c Chunk) {
-	url, ok1 := c.Fields["url"].(string)
-	mediaType, ok2 := c.Fields["mediaType"].(string)
-	name, ok3 := c.Fields["name"].(string)
-	_ = ok1
-	_ = ok2
-	_ = ok3
-	b.parts = append(b.parts, map[string]any{
-		"type": "file", "url": url, "mediaType": mediaType, "name": name,
-	})
+	part := map[string]any{"type": "file"}
+	for _, key := range []string{"url", "mediaType", "name", "id", "fileId"} {
+		if v, ok := c.Fields[key].(string); ok && v != "" {
+			part[key] = v
+		}
+	}
+	if data := c.Fields["data"]; data != nil {
+		part["data"] = data
+	}
+	if pm := c.Fields["providerMetadata"]; pm != nil {
+		part["providerMetadata"] = pm
+	}
+	b.parts = append(b.parts, part)
+}
+
+// copyOptionalBool copies a bool field from src to dst if present.
+func copyOptionalBool(dst, src map[string]any, key string) {
+	if v, ok := src[key].(bool); ok {
+		dst[key] = v
+	}
+}
+
+// copyOptionalString copies a non-empty string field from src to dst if present.
+func copyOptionalString(dst, src map[string]any, key string) {
+	if v, ok := src[key].(string); ok && v != "" {
+		dst[key] = v
+	}
+}
+
+// applyV6ToolFields copies optional v6 bool/string fields from a chunk into a part map.
+func applyV6ToolFields(part, fields map[string]any) {
+	copyOptionalBool(part, fields, "providerExecuted")
+	copyOptionalBool(part, fields, "dynamic")
+	copyOptionalBool(part, fields, "preliminary")
+	copyOptionalString(part, fields, "title")
 }
 
 func (b *PersistedMessageBuilder) observeDataChunk(c Chunk) {
