@@ -49,10 +49,7 @@ func (b *PersistedMessageBuilder) ObserveChunk(c Chunk) {
 	case ChunkTextEnd:
 		text := b.textAccum.String()
 		if text != "" {
-			b.parts = append(b.parts, map[string]any{
-				"type": "text",
-				"text": text,
-			})
+			b.parts = append(b.parts, map[string]any{"type": "text", "text": text})
 			b.textAccum.Reset()
 		}
 
@@ -69,95 +66,22 @@ func (b *PersistedMessageBuilder) ObserveChunk(c Chunk) {
 		}
 
 	case ChunkReasoningEnd:
-		if sig, ok := c.Fields["signature"].(string); ok && sig != "" {
-			b.lastSignature = sig
-		}
-		reasoning := b.reasoningAccum.String()
-		if reasoning != "" {
-			part := map[string]any{
-				"type":      "reasoning",
-				"reasoning": reasoning,
-			}
-			if b.lastSignature != "" {
-				part["signature"] = b.lastSignature
-			}
-			b.parts = append(b.parts, part)
-			b.reasoningAccum.Reset()
-			b.lastSignature = ""
-		}
+		b.observeReasoningEnd(c)
 
 	case ChunkToolInputAvailable:
-		tcID, _ := c.Fields["toolCallId"].(string)
-		toolName, _ := c.Fields["toolName"].(string)
-		input := c.Fields["input"]
-		if tcID == "" {
-			return
-		}
-		if _, exists := b.pendingTool[tcID]; !exists {
-			b.pendingTool[tcID] = &toolInvocationPart{
-				ToolCallID: tcID,
-				ToolName:   toolName,
-				State:      "input-available",
-			}
-		}
-		b.pendingTool[tcID].Input = input
-		b.pendingTool[tcID].ToolName = toolName
+		b.observeToolInput(c)
 
 	case ChunkToolOutputAvailable:
-		tcID, _ := c.Fields["toolCallId"].(string)
-		output := c.Fields["output"]
-		if tcID == "" {
-			return
-		}
-		tool, exists := b.pendingTool[tcID]
-		if !exists {
-			tool = &toolInvocationPart{ToolCallID: tcID, State: "output-available"}
-			b.pendingTool[tcID] = tool
-		}
-		tool.Output = output
-		tool.State = "output-available"
-		b.parts = append(b.parts, map[string]any{
-			"type":       "tool-invocation",
-			"toolCallId": tool.ToolCallID,
-			"toolName":   tool.ToolName,
-			"state":      tool.State,
-			"input":      tool.Input,
-			"output":     tool.Output,
-		})
-		delete(b.pendingTool, tcID)
+		b.observeToolOutput(c)
 
 	case ChunkSourceURL:
-		id, _ := c.Fields["sourceId"].(string)
-		url, _ := c.Fields["url"].(string)
-		title, _ := c.Fields["title"].(string)
-		b.parts = append(b.parts, map[string]any{
-			"type":  "source-url",
-			"id":    id,
-			"url":   url,
-			"title": title,
-		})
+		b.observeSourceURL(c)
 
 	case ChunkSourceDocument:
-		id, _ := c.Fields["sourceId"].(string)
-		title, _ := c.Fields["title"].(string)
-		mediaType, _ := c.Fields["mediaType"].(string)
-		b.parts = append(b.parts, map[string]any{
-			"type":      "source-document",
-			"id":        id,
-			"title":     title,
-			"mediaType": mediaType,
-		})
+		b.observeSourceDocument(c)
 
 	case ChunkFile:
-		url, _ := c.Fields["url"].(string)
-		mediaType, _ := c.Fields["mediaType"].(string)
-		name, _ := c.Fields["name"].(string)
-		b.parts = append(b.parts, map[string]any{
-			"type":      "file",
-			"url":       url,
-			"mediaType": mediaType,
-			"name":      name,
-		})
+		b.observeFile(c)
 
 	case ChunkMessageMetadata:
 		if meta := c.Fields["messageMetadata"]; meta != nil {
@@ -167,23 +91,121 @@ func (b *PersistedMessageBuilder) ObserveChunk(c Chunk) {
 		}
 
 	default:
-		// data-* chunks (non-transient)
-		if strings.HasPrefix(c.Type, "data-") && !strings.HasPrefix(c.Type, "transient-data-") {
-			transient, _ := c.Fields["transient"].(bool)
-			if transient {
-				return
-			}
-			name := strings.TrimPrefix(c.Type, "data-")
-			data := c.Fields["data"]
-			b.parts = append(b.parts, map[string]any{
-				"type":        "data",
-				"name":        name,
-				"data":        data,
-				"isTransient": false,
-			})
-		}
-		// transient-data-* → excluded from parts
+		b.observeDataChunk(c)
 	}
+}
+
+func (b *PersistedMessageBuilder) observeReasoningEnd(c Chunk) {
+	if sig, ok := c.Fields["signature"].(string); ok && sig != "" {
+		b.lastSignature = sig
+	}
+	reasoning := b.reasoningAccum.String()
+	if reasoning != "" {
+		part := map[string]any{"type": "reasoning", "reasoning": reasoning}
+		if b.lastSignature != "" {
+			part["signature"] = b.lastSignature
+		}
+		b.parts = append(b.parts, part)
+		b.reasoningAccum.Reset()
+		b.lastSignature = ""
+	}
+}
+
+func (b *PersistedMessageBuilder) observeToolInput(c Chunk) {
+	tcID, ok1 := c.Fields["toolCallId"].(string)
+	toolName, ok2 := c.Fields["toolName"].(string)
+	_ = ok1
+	_ = ok2
+	input := c.Fields["input"]
+	if tcID == "" {
+		return
+	}
+	if _, exists := b.pendingTool[tcID]; !exists {
+		b.pendingTool[tcID] = &toolInvocationPart{
+			ToolCallID: tcID,
+			ToolName:   toolName,
+			State:      "input-available",
+		}
+	}
+	b.pendingTool[tcID].Input = input
+	b.pendingTool[tcID].ToolName = toolName
+}
+
+func (b *PersistedMessageBuilder) observeToolOutput(c Chunk) {
+	tcID, ok := c.Fields["toolCallId"].(string)
+	_ = ok
+	output := c.Fields["output"]
+	if tcID == "" {
+		return
+	}
+	tool, exists := b.pendingTool[tcID]
+	if !exists {
+		tool = &toolInvocationPart{ToolCallID: tcID, State: "output-available"}
+		b.pendingTool[tcID] = tool
+	}
+	tool.Output = output
+	tool.State = "output-available"
+	b.parts = append(b.parts, map[string]any{
+		"type":       "tool-invocation",
+		"toolCallId": tool.ToolCallID,
+		"toolName":   tool.ToolName,
+		"state":      tool.State,
+		"input":      tool.Input,
+		"output":     tool.Output,
+	})
+	delete(b.pendingTool, tcID)
+}
+
+func (b *PersistedMessageBuilder) observeSourceURL(c Chunk) {
+	id, ok1 := c.Fields["sourceId"].(string)
+	url, ok2 := c.Fields["url"].(string)
+	title, ok3 := c.Fields["title"].(string)
+	_ = ok1
+	_ = ok2
+	_ = ok3
+	b.parts = append(b.parts, map[string]any{
+		"type": "source-url", "id": id, "url": url, "title": title,
+	})
+}
+
+func (b *PersistedMessageBuilder) observeSourceDocument(c Chunk) {
+	id, ok1 := c.Fields["sourceId"].(string)
+	title, ok2 := c.Fields["title"].(string)
+	mediaType, ok3 := c.Fields["mediaType"].(string)
+	_ = ok1
+	_ = ok2
+	_ = ok3
+	b.parts = append(b.parts, map[string]any{
+		"type": "source-document", "id": id, "title": title, "mediaType": mediaType,
+	})
+}
+
+func (b *PersistedMessageBuilder) observeFile(c Chunk) {
+	url, ok1 := c.Fields["url"].(string)
+	mediaType, ok2 := c.Fields["mediaType"].(string)
+	name, ok3 := c.Fields["name"].(string)
+	_ = ok1
+	_ = ok2
+	_ = ok3
+	b.parts = append(b.parts, map[string]any{
+		"type": "file", "url": url, "mediaType": mediaType, "name": name,
+	})
+}
+
+func (b *PersistedMessageBuilder) observeDataChunk(c Chunk) {
+	// data-* chunks (non-transient); transient-data-* are excluded from parts.
+	if !strings.HasPrefix(c.Type, "data-") || strings.HasPrefix(c.Type, "transient-data-") {
+		return
+	}
+	transient, ok := c.Fields["transient"].(bool)
+	_ = ok
+	if transient {
+		return
+	}
+	name := strings.TrimPrefix(c.Type, "data-")
+	b.parts = append(b.parts, map[string]any{
+		"type": "data", "name": name, "data": c.Fields["data"], "isTransient": false,
+	})
 }
 
 // Content returns the denormalized text content (all text parts joined).
