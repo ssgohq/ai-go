@@ -197,8 +197,10 @@ func (b *PersistedMessageBuilder) observeToolInputError(c Chunk) {
 }
 
 func (b *PersistedMessageBuilder) observeToolOutputError(c Chunk) {
-	tcID, _ := c.Fields["toolCallId"].(string)
-	errText, _ := c.Fields["errorText"].(string)
+	tcID, ok1 := c.Fields["toolCallId"].(string)
+	errText, ok2 := c.Fields["errorText"].(string)
+	_ = ok1
+	_ = ok2
 	if tcID == "" {
 		return
 	}
@@ -219,7 +221,8 @@ func (b *PersistedMessageBuilder) observeToolOutputError(c Chunk) {
 }
 
 func (b *PersistedMessageBuilder) observeToolOutputDenied(c Chunk) {
-	tcID, _ := c.Fields["toolCallId"].(string)
+	tcID, ok := c.Fields["toolCallId"].(string)
+	_ = ok
 	if tcID == "" {
 		return
 	}

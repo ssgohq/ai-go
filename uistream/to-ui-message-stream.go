@@ -82,7 +82,11 @@ func ToUIMessageStream(sr StreamEventer, msgID string, opts ToUIStreamOptions) <
 
 // interceptEvents filters and tracks usage from the raw engine event stream.
 // It writes accumulated usage into totalUsage (updated concurrently by the goroutine).
-func interceptEvents(eventCh <-chan engine.StepEvent, opts ToUIStreamOptions, totalUsage *UsageInfo) <-chan engine.StepEvent {
+func interceptEvents(
+	eventCh <-chan engine.StepEvent,
+	opts ToUIStreamOptions,
+	totalUsage *UsageInfo,
+) <-chan engine.StepEvent {
 	intercepted := make(chan engine.StepEvent, 64)
 
 	go func() {
