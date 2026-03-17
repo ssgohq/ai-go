@@ -117,8 +117,8 @@ func extraBodyFieldsForRequest(req ai.LanguageModelRequest) map[string]any {
 			thinkingMap["thinking_level"] = cfg.ThinkingLevel
 		}
 		if len(thinkingMap) > 0 {
-			google, _ := result["google"].(map[string]any)
-			if google == nil {
+			google, ok := result["google"].(map[string]any)
+			if !ok || google == nil {
 				google = map[string]any{}
 			}
 			google["thinking_config"] = thinkingMap
