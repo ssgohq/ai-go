@@ -154,6 +154,9 @@ func TestChatRequestEnvelope_TriggerAndMessageID_RoundTrip(t *testing.T) {
 		},
 	}
 
+	if env.ID != "sess-1" {
+		t.Errorf("ID: got %q, want %q", env.ID, "sess-1")
+	}
 	if env.Trigger != "regenerate-message" {
 		t.Errorf("Trigger: got %q, want %q", env.Trigger, "regenerate-message")
 	}
