@@ -156,6 +156,105 @@ func TestPersistedMessageBuilder_NilPartsWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestPersistedMessageBuilder_SourceDocument_V6Fields(t *testing.T) {
+	b := NewPersistedMessageBuilder()
+	b.ObserveChunk(Chunk{Type: ChunkSourceDocument, Fields: map[string]any{
+		"sourceId":         "doc-1",
+		"title":            "Research Paper",
+		"mediaType":        "application/pdf",
+		"filename":         "paper.pdf",
+		"data":             []byte("pdfbytes"),
+		"providerMetadata": map[string]any{"source": "arxiv"},
+	}})
+
+	var parts []map[string]any
+	if err := json.Unmarshal(b.Parts(), &parts); err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+	p := parts[0]
+	if p["type"] != "source-document" {
+		t.Errorf("unexpected type: %v", p["type"])
+	}
+	if p["filename"] != "paper.pdf" {
+		t.Errorf("expected filename=paper.pdf, got %v", p["filename"])
+	}
+	if p["data"] == nil {
+		t.Error("expected data field to be set")
+	}
+	if p["providerMetadata"] == nil {
+		t.Error("expected providerMetadata field to be set")
+	}
+}
+
+func TestPersistedMessageBuilder_File_V6Fields(t *testing.T) {
+	b := NewPersistedMessageBuilder()
+	b.ObserveChunk(Chunk{Type: ChunkFile, Fields: map[string]any{
+		"url":              "https://cdn.example.com/f.png",
+		"mediaType":        "image/png",
+		"id":               "file-id-1",
+		"fileId":           "fid-42",
+		"name":             "photo.png",
+		"data":             []byte("imgdata"),
+		"providerMetadata": map[string]any{"bucket": "s3"},
+	}})
+
+	var parts []map[string]any
+	if err := json.Unmarshal(b.Parts(), &parts); err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+	p := parts[0]
+	if p["type"] != "file" {
+		t.Errorf("unexpected type: %v", p["type"])
+	}
+	if p["id"] != "file-id-1" {
+		t.Errorf("expected id=file-id-1, got %v", p["id"])
+	}
+	if p["fileId"] != "fid-42" {
+		t.Errorf("expected fileId=fid-42, got %v", p["fileId"])
+	}
+	if p["name"] != "photo.png" {
+		t.Errorf("expected name=photo.png, got %v", p["name"])
+	}
+	if p["data"] == nil {
+		t.Error("expected data field to be set")
+	}
+	if p["providerMetadata"] == nil {
+		t.Error("expected providerMetadata to be set")
+	}
+}
+
+func TestPersistedMessageBuilder_ToolOutput_Preliminary(t *testing.T) {
+	b := NewPersistedMessageBuilder()
+	b.ObserveChunk(Chunk{Type: ChunkToolInputAvailable, Fields: map[string]any{
+		"toolCallId": "tc-prelim",
+		"toolName":   "search",
+		"input":      map[string]any{"q": "test"},
+	}})
+	b.ObserveChunk(Chunk{Type: ChunkToolOutputAvailable, Fields: map[string]any{
+		"toolCallId":  "tc-prelim",
+		"output":      map[string]any{"results": []string{"a"}},
+		"preliminary": true,
+	}})
+
+	var parts []map[string]any
+	if err := json.Unmarshal(b.Parts(), &parts); err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+	p := parts[0]
+	if p["preliminary"] != true {
+		t.Errorf("expected preliminary=true, got %v", p["preliminary"])
+	}
+}
+
 func TestMergeWithPersistence_IntegrationOption(t *testing.T) {
 	b := NewPersistedMessageBuilder()
 	opt := MergeWithPersistence(b)

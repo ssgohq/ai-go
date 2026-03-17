@@ -262,9 +262,12 @@ func (b *PersistedMessageBuilder) observeSourceURL(c Chunk) {
 }
 
 func (b *PersistedMessageBuilder) observeSourceDocument(c Chunk) {
-	id, _ := c.Fields["sourceId"].(string)
-	title, _ := c.Fields["title"].(string)
-	mediaType, _ := c.Fields["mediaType"].(string)
+	id, ok1 := c.Fields["sourceId"].(string)
+	title, ok2 := c.Fields["title"].(string)
+	mediaType, ok3 := c.Fields["mediaType"].(string)
+	_ = ok1
+	_ = ok2
+	_ = ok3
 	part := map[string]any{
 		"type": "source-document", "id": id, "title": title, "mediaType": mediaType,
 	}
