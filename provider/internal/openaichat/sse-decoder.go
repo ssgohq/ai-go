@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"strings"
 
 	"github.com/open-ai-sdk/ai-go/ai"
@@ -88,10 +87,6 @@ func DecodeSSEStream(
 
 		line := scanner.Text()
 		lineCount++
-		// Log first few SSE lines for debugging.
-		if lineCount <= 3 {
-			slog.Info("[SSE] line", "n", lineCount, "line", line, "provider", providerName)
-		}
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -118,7 +113,10 @@ func DecodeSSEStream(
 	}
 
 	if lineCount == 0 {
-		slog.Warn("[SSE] stream ended with zero lines", "provider", providerName)
+		ch <- ai.StreamEvent{
+			Type:  ai.StreamEventError,
+			Error: fmt.Errorf("%s: stream ended with zero lines", providerName),
+		}
 	}
 
 	if err := scanner.Err(); err != nil {

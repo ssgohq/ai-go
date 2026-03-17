@@ -30,10 +30,11 @@ type SourceHook func(wr *Writer, sourceID, url, title string)
 // For custom data-* chunks or source chunks between or after stream events,
 // obtain the Writer via adapter.Writer(w) and call WriteData / WriteSource directly.
 type Adapter struct {
-	msgID          string
-	toolResultHook ToolResultHook
-	sourceHook     SourceHook
-	onFinish       func(text, finishReason string)
+	msgID              string
+	toolResultHook     ToolResultHook
+	sourceHook         SourceHook
+	onFinish           func(text, finishReason string)
+	persistenceBuilder *PersistedMessageBuilder
 }
 
 // NewAdapter creates an Adapter with a fixed message ID.
@@ -61,6 +62,13 @@ func (a *Adapter) WithSourceHook(hook SourceHook) *Adapter {
 // finish reason captured from the last finish chunk.
 func (a *Adapter) WithOnFinish(fn func(text, finishReason string)) *Adapter {
 	a.onFinish = fn
+	return a
+}
+
+// WithPersistenceBuilder sets a PersistedMessageBuilder that observes every chunk
+// during Stream for typed-parts persistence.
+func (a *Adapter) WithPersistenceBuilder(b *PersistedMessageBuilder) *Adapter {
+	a.persistenceBuilder = b
 	return a
 }
 
@@ -115,6 +123,9 @@ func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
 
 	var lastFinishReason string
 	for c := range cs.Chunks {
+		if a.persistenceBuilder != nil {
+			a.persistenceBuilder.ObserveChunk(c)
+		}
 		switch c.Type {
 		case ChunkFinish:
 			if reason, ok := c.Fields["finishReason"].(string); ok {

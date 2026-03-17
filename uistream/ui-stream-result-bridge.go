@@ -11,9 +11,10 @@ type UIStreamOption func(*uiStreamBridgeConfig)
 
 // uiStreamBridgeConfig holds options for StreamToWriter.
 type uiStreamBridgeConfig struct {
-	toolResultHook ToolResultHook
-	sourceHook     SourceHook
-	onFinish       func(text string)
+	toolResultHook     ToolResultHook
+	sourceHook         SourceHook
+	onFinish           func(text string)
+	persistenceBuilder *PersistedMessageBuilder
 }
 
 // WithUIToolResultHook sets a callback invoked after each tool result is emitted.
@@ -36,6 +37,14 @@ func WithUISourceHook(hook SourceHook) UIStreamOption {
 func WithUIOnFinish(fn func(text string)) UIStreamOption {
 	return func(c *uiStreamBridgeConfig) {
 		c.onFinish = fn
+	}
+}
+
+// WithUIPersistence sets a PersistedMessageBuilder that observes every chunk
+// during streaming for typed-parts persistence.
+func WithUIPersistence(b *PersistedMessageBuilder) UIStreamOption {
+	return func(c *uiStreamBridgeConfig) {
+		c.persistenceBuilder = b
 	}
 }
 
@@ -69,6 +78,10 @@ func StreamToWriter(sr *ai.StreamResult, w io.Writer, msgID string, opts ...UISt
 		adapter.WithOnFinish(func(text, _ string) {
 			fn(text)
 		})
+	}
+
+	if cfg.persistenceBuilder != nil {
+		adapter.WithPersistenceBuilder(cfg.persistenceBuilder)
 	}
 
 	return adapter.Stream(sr.Events(), w)
