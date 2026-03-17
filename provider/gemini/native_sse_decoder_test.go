@@ -287,10 +287,20 @@ func TestDecodeNativeSSE_MultipleToolCalls(t *testing.T) {
 		t.Fatalf("expected 2 tool call deltas, got %d", len(tools))
 	}
 	if tools[0].ToolCallName != "search" || tools[0].ToolCallID != "call_0" || tools[0].ToolCallIndex != 0 {
-		t.Errorf("unexpected tool 0: name=%q id=%q idx=%d", tools[0].ToolCallName, tools[0].ToolCallID, tools[0].ToolCallIndex)
+		t.Errorf(
+			"unexpected tool 0: name=%q id=%q idx=%d",
+			tools[0].ToolCallName,
+			tools[0].ToolCallID,
+			tools[0].ToolCallIndex,
+		)
 	}
 	if tools[1].ToolCallName != "translate" || tools[1].ToolCallID != "call_1" || tools[1].ToolCallIndex != 1 {
-		t.Errorf("unexpected tool 1: name=%q id=%q idx=%d", tools[1].ToolCallName, tools[1].ToolCallID, tools[1].ToolCallIndex)
+		t.Errorf(
+			"unexpected tool 1: name=%q id=%q idx=%d",
+			tools[1].ToolCallName,
+			tools[1].ToolCallID,
+			tools[1].ToolCallIndex,
+		)
 	}
 	if finishEvent.FinishReason != ai.FinishReasonToolCalls {
 		t.Errorf("expected tool_calls finish, got %s", finishEvent.FinishReason)

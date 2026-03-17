@@ -25,7 +25,7 @@ type nativeCandidate struct {
 	Content           *nativeCandidateContent  `json:"content"`
 	FinishReason      string                   `json:"finishReason"`
 	Index             int                      `json:"index"`
-	GroundingMetadata *nativeGroundingMetadata  `json:"groundingMetadata"`
+	GroundingMetadata *nativeGroundingMetadata `json:"groundingMetadata"`
 	SafetyRatings     []any                    `json:"safetyRatings"`
 }
 
@@ -35,11 +35,11 @@ type nativeCandidateContent struct {
 }
 
 type nativeResponsePart struct {
-	Text             string               `json:"text,omitempty"`
-	Thought          *bool                `json:"thought,omitempty"`
-	ThoughtSignature string               `json:"thoughtSignature,omitempty"`
-	FunctionCall     *nativeSSEFuncCall   `json:"functionCall,omitempty"`
-	InlineData       *nativeInlineData    `json:"inlineData,omitempty"`
+	Text             string             `json:"text,omitempty"`
+	Thought          *bool              `json:"thought,omitempty"`
+	ThoughtSignature string             `json:"thoughtSignature,omitempty"`
+	FunctionCall     *nativeSSEFuncCall `json:"functionCall,omitempty"`
+	InlineData       *nativeInlineData  `json:"inlineData,omitempty"`
 }
 
 type nativeSSEFuncCall struct {

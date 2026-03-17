@@ -81,7 +81,7 @@ func (m *NativeLanguageModel) Stream(ctx context.Context, req ai.LanguageModelRe
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-goog-api-key", m.cfg.APIKey)
 
-	resp, err := m.client.Do(httpReq)
+	resp, err := m.client.Do(httpReq) //nolint:bodyclose // closed in goroutine or error path
 	if err != nil {
 		return nil, fmt.Errorf("gemini-native: http request: %w", err)
 	}
@@ -89,19 +89,19 @@ func (m *NativeLanguageModel) Stream(ctx context.Context, req ai.LanguageModelRe
 		defer resp.Body.Close()
 		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			return nil, fmt.Errorf("gemini-native: unexpected status %d (failed to read body: %w)", resp.StatusCode, readErr)
+			return nil, fmt.Errorf(
+				"gemini-native: unexpected status %d (failed to read body: %w)",
+				resp.StatusCode,
+				readErr,
+			)
 		}
 		return nil, fmt.Errorf("gemini-native: unexpected status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	ch := make(chan ai.StreamEvent, 64)
 	go func() {
+		defer resp.Body.Close()
 		decodeNativeSSEStream(ctx, resp.Body, ch)
-		// Inject warnings into a synthetic finish event if the decoder didn't
-		// emit one that we could attach to. In practice, warnings are rare and
-		// the stream normally ends with a finish event.
-		// We handle it inline by wrapping the channel to inject warnings into the
-		// first finish event.
 	}()
 
 	if len(warnings) == 0 {

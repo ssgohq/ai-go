@@ -281,7 +281,7 @@ func TestEncodeNativeTools_SchemaSanitization(t *testing.T) {
 					},
 				},
 				"$ref":                 "#/definitions/Foo",
-				"$defs":               map[string]any{"Foo": map[string]any{"type": "string"}},
+				"$defs":                map[string]any{"Foo": map[string]any{"type": "string"}},
 				"additionalProperties": false,
 				"examples":             []any{"example1"},
 			},

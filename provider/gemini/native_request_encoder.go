@@ -353,7 +353,7 @@ func parseDataURI(uri string) (mimeType, data string, ok bool) {
 	meta := rest[:commaIdx]
 	payload := rest[commaIdx+1:]
 
-	mime := "application/octet-stream"
+	var mime string
 	isBase64 := false
 	if strings.HasSuffix(meta, ";base64") {
 		isBase64 = true
