@@ -111,7 +111,7 @@ func TestIntegration_PersistedMessageBuilder_FullConversation(t *testing.T) {
 }
 
 // TestIntegration_EnvelopeRoundTrip_WithAllPartTypes verifies a full ChatRequestEnvelope
-// with text/image/file/tool-invocation parts and v5 fields survives JSON round-trip
+// with text/image/file/tool-invocation parts and v6 fields survives JSON round-trip
 // and converts correctly to AI messages.
 func TestIntegration_EnvelopeRoundTrip_WithAllPartTypes(t *testing.T) {
 	original := ChatRequestEnvelope{
@@ -158,7 +158,7 @@ func TestIntegration_EnvelopeRoundTrip_WithAllPartTypes(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	// Verify v5 fields survived.
+	// Verify v6 fields survived.
 	if decoded.Trigger != "submit-message" {
 		t.Errorf("Trigger: got %q", decoded.Trigger)
 	}
