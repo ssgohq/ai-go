@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/open-ai-sdk/ai-go/ai"
@@ -76,6 +77,7 @@ func DecodeSSEStream(
 	// Allow up to 1 MB per SSE line (tool schemas can be large).
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
+	lineCount := 0
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
@@ -85,6 +87,11 @@ func DecodeSSEStream(
 		}
 
 		line := scanner.Text()
+		lineCount++
+		// Log first few SSE lines for debugging.
+		if lineCount <= 3 {
+			slog.Info("[SSE] line", "n", lineCount, "line", line, "provider", providerName)
+		}
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -108,6 +115,10 @@ func DecodeSSEStream(
 		}
 
 		emitChunkEvents(chunk, ch, params.MetadataExtractor, params.SourceExtractor)
+	}
+
+	if lineCount == 0 {
+		slog.Warn("[SSE] stream ended with zero lines", "provider", providerName)
 	}
 
 	if err := scanner.Err(); err != nil {

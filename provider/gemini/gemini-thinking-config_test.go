@@ -29,6 +29,21 @@ func TestThinkingConfig_NilProviderOptions(t *testing.T) {
 	}
 }
 
+// extractThinkingConfig is a test helper that extracts the thinking_config
+// map from the nested google.thinking_config structure.
+func extractThinkingConfig(t *testing.T, fields map[string]any) map[string]any {
+	t.Helper()
+	google, ok := fields["google"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected google map, got %T", fields["google"])
+	}
+	tc, ok := google["thinking_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected thinking_config map, got %T", google["thinking_config"])
+	}
+	return tc
+}
+
 func TestThinkingConfig_WithThinkingBudget(t *testing.T) {
 	budget := 1024
 	req := ai.LanguageModelRequest{
@@ -47,18 +62,15 @@ func TestThinkingConfig_WithThinkingBudget(t *testing.T) {
 		t.Fatal("expected body fields with ThinkingConfig set, got nil")
 	}
 
-	tc, ok := fields["thinkingConfig"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected thinkingConfig map, got %T", fields["thinkingConfig"])
+	tc := extractThinkingConfig(t, fields)
+	if tc["thinking_budget"] != budget {
+		t.Errorf("expected thinking_budget=%d, got %v", budget, tc["thinking_budget"])
 	}
-	if tc["thinkingBudget"] != budget {
-		t.Errorf("expected thinkingBudget=%d, got %v", budget, tc["thinkingBudget"])
+	if _, ok := tc["include_thoughts"]; ok {
+		t.Error("expected no include_thoughts key when not set")
 	}
-	if _, ok := tc["includeThoughts"]; ok {
-		t.Error("expected no includeThoughts key when not set")
-	}
-	if _, ok := tc["thinkingLevel"]; ok {
-		t.Error("expected no thinkingLevel key when not set")
+	if _, ok := tc["thinking_level"]; ok {
+		t.Error("expected no thinking_level key when not set")
 	}
 }
 
@@ -80,12 +92,9 @@ func TestThinkingConfig_WithIncludeThoughts(t *testing.T) {
 		t.Fatal("expected body fields, got nil")
 	}
 
-	tc, ok := fields["thinkingConfig"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected thinkingConfig map, got %T", fields["thinkingConfig"])
-	}
-	if tc["includeThoughts"] != true {
-		t.Errorf("expected includeThoughts=true, got %v", tc["includeThoughts"])
+	tc := extractThinkingConfig(t, fields)
+	if tc["include_thoughts"] != true {
+		t.Errorf("expected include_thoughts=true, got %v", tc["include_thoughts"])
 	}
 }
 
@@ -110,12 +119,9 @@ func TestThinkingConfig_WithThinkingLevel(t *testing.T) {
 				t.Fatal("expected body fields, got nil")
 			}
 
-			tc, ok := fields["thinkingConfig"].(map[string]any)
-			if !ok {
-				t.Fatalf("expected thinkingConfig map, got %T", fields["thinkingConfig"])
-			}
-			if tc["thinkingLevel"] != level {
-				t.Errorf("expected thinkingLevel=%s, got %v", level, tc["thinkingLevel"])
+			tc := extractThinkingConfig(t, fields)
+			if tc["thinking_level"] != level {
+				t.Errorf("expected thinking_level=%s, got %v", level, tc["thinking_level"])
 			}
 		})
 	}
@@ -142,18 +148,15 @@ func TestThinkingConfig_AllFieldsSet(t *testing.T) {
 		t.Fatal("expected body fields, got nil")
 	}
 
-	tc, ok := fields["thinkingConfig"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected thinkingConfig map, got %T", fields["thinkingConfig"])
+	tc := extractThinkingConfig(t, fields)
+	if tc["thinking_budget"] != budget {
+		t.Errorf("expected thinking_budget=%d, got %v", budget, tc["thinking_budget"])
 	}
-	if tc["thinkingBudget"] != budget {
-		t.Errorf("expected thinkingBudget=%d, got %v", budget, tc["thinkingBudget"])
+	if tc["include_thoughts"] != false {
+		t.Errorf("expected include_thoughts=false, got %v", tc["include_thoughts"])
 	}
-	if tc["includeThoughts"] != false {
-		t.Errorf("expected includeThoughts=false, got %v", tc["includeThoughts"])
-	}
-	if tc["thinkingLevel"] != "high" {
-		t.Errorf("expected thinkingLevel=high, got %v", tc["thinkingLevel"])
+	if tc["thinking_level"] != "high" {
+		t.Errorf("expected thinking_level=high, got %v", tc["thinking_level"])
 	}
 }
 
