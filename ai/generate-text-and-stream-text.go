@@ -166,9 +166,10 @@ func toEngineParams(req GenerateTextRequest) engine.RunParams {
 		defs := make([]engine.ToolDefinition, len(req.Tools.Definitions))
 		for i, d := range req.Tools.Definitions {
 			defs[i] = engine.ToolDefinition{
-				Name:        d.Name,
-				Description: d.Description,
-				InputSchema: d.InputSchema,
+				Name:          d.Name,
+				Description:   d.Description,
+				InputSchema:   d.InputSchema,
+				ToModelOutput: d.ToModelOutput,
 			}
 		}
 		engTools = &engine.ToolSet{
@@ -176,6 +177,10 @@ func toEngineParams(req GenerateTextRequest) engine.RunParams {
 			Executor:    req.Tools.Executor,
 		}
 		engReq.Tools = defs
+
+		if len(req.ActiveTools) > 0 {
+			engReq.Tools = engineFilterTools(defs, req.ActiveTools)
+		}
 	}
 
 	var stopWhen engine.StopCondition
@@ -190,12 +195,200 @@ func toEngineParams(req GenerateTextRequest) engine.RunParams {
 		}
 	}
 
+	var engPrepareStep engine.PrepareStepFunc
+	if req.PrepareStep != nil {
+		engPrepareStep = func(ectx engine.PrepareStepContext) *engine.PrepareStepResult {
+			aiCtx := PrepareStepContext{StepNumber: ectx.StepNumber}
+			for _, s := range ectx.Steps {
+				aiCtx.Steps = append(aiCtx.Steps, PrepareStepInfo{
+					StepNumber:   s.StepNumber,
+					HasToolCalls: s.HasToolCalls,
+					ToolNames:    s.ToolNames,
+					Text:         s.Text,
+					FinishReason: FinishReason(s.FinishReason),
+				})
+			}
+			result := req.PrepareStep(aiCtx)
+			if result == nil {
+				return nil
+			}
+			engResult := &engine.PrepareStepResult{
+				ActiveTools:     result.ActiveTools,
+				System:          result.System,
+				ProviderOptions: result.ProviderOptions,
+			}
+			if result.Model != nil {
+				engResult.Model = &engineModelAdapter{result.Model}
+			}
+			if result.ToolChoice != nil {
+				engResult.ToolChoice = &engine.ToolChoice{Type: result.ToolChoice.Type, ToolName: result.ToolChoice.ToolName}
+			}
+			return engResult
+		}
+	}
+
+	var engCallbacks *engine.LifecycleCallbacks
+	if req.OnStepFinish != nil || req.OnFinish != nil || req.OnChunk != nil || req.OnError != nil {
+		engCallbacks = &engine.LifecycleCallbacks{}
+		if req.OnStepFinish != nil {
+			fn := req.OnStepFinish
+			engCallbacks.OnStepFinish = func(ev engine.StepFinishEvent) {
+				fn(StepFinishEvent{
+					StepNumber:       ev.StepNumber,
+					ToolCalls:        fromEngineToolCalls(ev.ToolCalls),
+					ToolResults:      fromEngineToolResults(ev.ToolResults),
+					FinishReason:     FinishReason(ev.FinishReason),
+					Usage:            fromEngineUsagePtr(ev.Usage),
+					ProviderMetadata: ev.ProviderMetadata,
+					Warnings:         fromEngineWarnings(ev.Warnings),
+				})
+			}
+		}
+		if req.OnFinish != nil {
+			fn := req.OnFinish
+			engCallbacks.OnFinish = func(ev engine.FinishEvent) {
+				fn(FinishEvent{
+					Text:             ev.Text,
+					Reasoning:        ev.Reasoning,
+					Steps:            fromEngineStepInfos(ev.Steps),
+					TotalUsage:       fromEngineUsage(ev.TotalUsage),
+					FinishReason:     FinishReason(ev.FinishReason),
+					ProviderMetadata: ev.ProviderMetadata,
+				})
+			}
+		}
+		if req.OnChunk != nil {
+			fn := req.OnChunk
+			engCallbacks.OnChunk = func(ev engine.StepEvent) {
+				fn(toChunkEvent(ev))
+			}
+		}
+		if req.OnError != nil {
+			engCallbacks.OnError = req.OnError
+		}
+	}
+
 	return engine.RunParams{
-		Model:    &engineModelAdapter{req.Model},
-		Request:  engReq,
-		Tools:    engTools,
-		StopWhen: stopWhen,
-		MaxSteps: req.MaxSteps,
+		Model:       &engineModelAdapter{req.Model},
+		Request:     engReq,
+		Tools:       engTools,
+		StopWhen:    stopWhen,
+		MaxSteps:    req.MaxSteps,
+		PrepareStep: engPrepareStep,
+		Callbacks:   engCallbacks,
+	}
+}
+
+func engineFilterTools(tools []engine.ToolDefinition, active []string) []engine.ToolDefinition {
+	set := make(map[string]bool, len(active))
+	for _, name := range active {
+		set[name] = true
+	}
+	var filtered []engine.ToolDefinition
+	for _, t := range tools {
+		if set[t.Name] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
+func fromEngineToolCalls(tcs []engine.ToolCallInfo) []ToolCallOutput {
+	if len(tcs) == 0 {
+		return nil
+	}
+	out := make([]ToolCallOutput, len(tcs))
+	for i, tc := range tcs {
+		out[i] = ToolCallOutput{ID: tc.ID, Name: tc.Name, Args: json.RawMessage(tc.Args)}
+	}
+	return out
+}
+
+func fromEngineToolResults(trs []engine.ToolResult) []ToolResult {
+	if len(trs) == 0 {
+		return nil
+	}
+	out := make([]ToolResult, len(trs))
+	for i, tr := range trs {
+		out[i] = ToolResult{ID: tr.ID, Name: tr.Name, Args: tr.Args, Output: tr.Output}
+	}
+	return out
+}
+
+func fromEngineUsagePtr(u *engine.Usage) *Usage {
+	if u == nil {
+		return nil
+	}
+	return &Usage{
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		TotalTokens:      u.TotalTokens,
+		ReasoningTokens:  u.ReasoningTokens,
+	}
+}
+
+func fromEngineUsage(u engine.Usage) Usage {
+	return Usage{
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		TotalTokens:      u.TotalTokens,
+		ReasoningTokens:  u.ReasoningTokens,
+	}
+}
+
+func fromEngineStepInfos(steps []engine.StepResultInfo) []StepOutput {
+	if len(steps) == 0 {
+		return nil
+	}
+	out := make([]StepOutput, len(steps))
+	for i, s := range steps {
+		out[i] = StepOutput{
+			Text:         s.Text,
+			FinishReason: FinishReason(s.FinishReason),
+		}
+	}
+	return out
+}
+
+func toChunkEvent(ev engine.StepEvent) ChunkEvent {
+	var typ string
+	switch ev.Type {
+	case engine.StepEventTextDelta:
+		typ = "text-delta"
+	case engine.StepEventReasoningDelta:
+		typ = "reasoning-delta"
+	case engine.StepEventToolCallStart:
+		typ = "tool-call-start"
+	case engine.StepEventToolCallDelta:
+		typ = "tool-call-delta"
+	case engine.StepEventToolCallReady:
+		typ = "tool-call-ready"
+	case engine.StepEventToolResult:
+		typ = "tool-result"
+	case engine.StepEventUsage:
+		typ = "usage"
+	case engine.StepEventStepStart:
+		typ = "step-start"
+	case engine.StepEventStepEnd:
+		typ = "step-end"
+	case engine.StepEventDone:
+		typ = "done"
+	case engine.StepEventError:
+		typ = "error"
+	case engine.StepEventSource:
+		typ = "source"
+	default:
+		typ = "unknown"
+	}
+	return ChunkEvent{
+		Type:              typ,
+		TextDelta:         ev.TextDelta,
+		ReasoningDelta:    ev.ReasoningDelta,
+		ToolCallID:        ev.ToolCallID,
+		ToolCallName:      ev.ToolCallName,
+		ToolCallArgsDelta: ev.ToolCallArgsDelta,
+		StepNumber:        ev.StepNumber,
+		FinishReason:      FinishReason(ev.FinishReason),
 	}
 }
 

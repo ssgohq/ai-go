@@ -24,29 +24,55 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 	}
 
 	history := buildInitialHistory(params.Request)
+	var completedSteps []StepResultInfo
 
 	for step := 0; step < maxSteps; step++ {
 		out <- StepEvent{Type: StepEventStepStart, StepNumber: step}
 
+		model := params.Model
 		req := params.Request
 		req.System = "" // already prepended as system message in history
 		req.Messages = history
 
-		eventCh, err := params.Model.Stream(ctx, req)
+		if params.PrepareStep != nil {
+			psResult := params.PrepareStep(PrepareStepContext{
+				StepNumber: step,
+				Steps:      completedSteps,
+			})
+			if psResult != nil {
+				if psResult.Model != nil {
+					model = psResult.Model
+				}
+				if psResult.ToolChoice != nil {
+					req.ToolChoice = psResult.ToolChoice
+				}
+				if psResult.System != "" {
+					req.System = psResult.System
+				}
+				if psResult.ProviderOptions != nil {
+					req.ProviderOptions = mergeProviderOptions(req.ProviderOptions, psResult.ProviderOptions)
+				}
+				if psResult.ActiveTools != nil {
+					req.Tools = filterTools(req.Tools, psResult.ActiveTools)
+				}
+			}
+		}
+
+		eventCh, err := model.Stream(ctx, req)
 		if err != nil {
 			out <- StepEvent{Type: StepEventError, Error: fmt.Errorf("step %d: start stream: %w", step, err)}
 			return
 		}
 
 		acc := newToolCallAccumulator()
-		sr, fatalErr := consumeStream(eventCh, out, acc)
+		sr, fatalErr := consumeStream(eventCh, out, acc, params.Callbacks)
 		if fatalErr {
 			return
 		}
 		fullText := sr.text
 
 		if !acc.hasToolCalls() {
-			out <- StepEvent{
+			stepEndEv := StepEvent{
 				Type:             StepEventStepEnd,
 				StepNumber:       step,
 				FinishReason:     sr.finish,
@@ -54,7 +80,13 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 				ProviderMetadata: sr.providerMeta,
 				Warnings:         sr.warnings,
 			}
+			out <- stepEndEv
+			emitOnStepFinish(params.Callbacks, step, nil, nil, sr)
+			completedSteps = append(completedSteps, StepResultInfo{
+				StepNumber: step, Text: fullText, FinishReason: sr.finish,
+			})
 			emitStructuredOutput(ctx, out, params, history)
+			emitOnFinish(params.Callbacks, completedSteps, sr)
 			out <- StepEvent{Type: StepEventDone}
 			return
 		}
@@ -63,13 +95,29 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		history = append(history, buildAssistantToolCallMessage(fullText, toolCalls))
 
 		toolNames := make([]string, 0, len(toolCalls))
+		var stepToolCalls []ToolCallInfo
+		var stepToolResults []ToolResult
 		for _, tc := range toolCalls {
 			out <- StepEvent{Type: StepEventToolCallReady, ToolCallID: tc.id, ToolCallName: tc.name}
 
 			result := executeToolCall(ctx, params.Tools, tc)
-			history = append(history, buildToolResultMessage(tc.id, result.Output))
+
+			// Apply ToModelOutput transform for history; event keeps original output.
+			modelOutput := result.Output
+			if params.Tools != nil {
+				for _, def := range params.Tools.Definitions {
+					if def.Name == tc.name && def.ToModelOutput != nil {
+						modelOutput = def.ToModelOutput(result.Output)
+						break
+					}
+				}
+			}
+
+			history = append(history, buildToolResultMessage(tc.id, modelOutput))
 			out <- StepEvent{Type: StepEventToolResult, ToolResult: result}
 			toolNames = append(toolNames, tc.name)
+			stepToolCalls = append(stepToolCalls, ToolCallInfo{ID: tc.id, Name: tc.name, Args: tc.args})
+			stepToolResults = append(stepToolResults, *result)
 		}
 
 		out <- StepEvent{
@@ -80,11 +128,18 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 			ProviderMetadata: sr.providerMeta,
 			Warnings:         sr.warnings,
 		}
+		emitOnStepFinish(params.Callbacks, step, stepToolCalls, stepToolResults, sr)
+
+		completedSteps = append(completedSteps, StepResultInfo{
+			StepNumber: step, HasToolCalls: true, ToolNames: toolNames,
+			Text: fullText, FinishReason: sr.finish,
+		})
 
 		if params.StopWhen != nil {
 			stopResult := &StepResult{HasToolCalls: true, ToolNames: toolNames, Text: fullText}
 			if params.StopWhen(step+1, stopResult) {
 				emitStructuredOutput(ctx, out, params, history)
+				emitOnFinish(params.Callbacks, completedSteps, sr)
 				out <- StepEvent{Type: StepEventDone}
 				return
 			}
@@ -98,37 +153,49 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 	}
 
 	emitStructuredOutput(ctx, out, params, history)
+	emitOnFinish(params.Callbacks, completedSteps, streamResult{finish: FinishReasonStop})
 	out <- StepEvent{Type: StepEventDone}
 }
 
 // streamResult holds accumulated metadata from consuming a model stream.
 type streamResult struct {
 	text         string
+	reasoning    string
 	finish       FinishReason
 	rawFinish    string
 	providerMeta map[string]any
 	warnings     []Warning
+	usage        *Usage
 }
 
 // consumeStream reads all events from a model stream, forwards them to the step
 // event channel, and accumulates tool calls via acc (may be nil for text-only calls).
 // Returns the accumulated result and true if a fatal error was emitted.
-func consumeStream(eventCh <-chan StreamEvent, out chan<- StepEvent, acc *toolCallAccumulator) (streamResult, bool) {
+func consumeStream(eventCh <-chan StreamEvent, out chan<- StepEvent, acc *toolCallAccumulator, cb *LifecycleCallbacks) (streamResult, bool) {
 	var sr streamResult
 	for ev := range eventCh {
 		switch ev.Type {
 		case StreamEventTextDelta:
 			sr.text += ev.TextDelta
-			out <- StepEvent{Type: StepEventTextDelta, TextDelta: ev.TextDelta}
+			stepEv := StepEvent{Type: StepEventTextDelta, TextDelta: ev.TextDelta}
+			out <- stepEv
+			if cb != nil && cb.OnChunk != nil {
+				cb.OnChunk(stepEv)
+			}
 
 		case StreamEventReasoningDelta:
-			out <- StepEvent{Type: StepEventReasoningDelta, ReasoningDelta: ev.TextDelta, ThoughtSignature: ev.ThoughtSignature}
+			stepEv := StepEvent{Type: StepEventReasoningDelta, ReasoningDelta: ev.TextDelta, ThoughtSignature: ev.ThoughtSignature}
+			sr.reasoning += ev.TextDelta
+			out <- stepEv
+			if cb != nil && cb.OnChunk != nil {
+				cb.OnChunk(stepEv)
+			}
 
 		case StreamEventToolCallDelta:
 			if acc != nil {
 				isNew := acc.add(ev)
 				if isNew {
-					out <- StepEvent{
+					stepEv := StepEvent{
 						Type:              StepEventToolCallStart,
 						ToolCallIndex:     ev.ToolCallIndex,
 						ToolCallID:        ev.ToolCallID,
@@ -136,22 +203,39 @@ func consumeStream(eventCh <-chan StreamEvent, out chan<- StepEvent, acc *toolCa
 						ToolCallArgsDelta: ev.ToolCallArgsDelta,
 						ThoughtSignature:  ev.ThoughtSignature,
 					}
+					out <- stepEv
+					if cb != nil && cb.OnChunk != nil {
+						cb.OnChunk(stepEv)
+					}
 				} else if ev.ToolCallArgsDelta != "" {
-					out <- StepEvent{
+					stepEv := StepEvent{
 						Type:              StepEventToolCallDelta,
 						ToolCallIndex:     ev.ToolCallIndex,
 						ToolCallID:        ev.ToolCallID,
 						ToolCallArgsDelta: ev.ToolCallArgsDelta,
 					}
+					out <- stepEv
+					if cb != nil && cb.OnChunk != nil {
+						cb.OnChunk(stepEv)
+					}
 				}
 			}
 
 		case StreamEventUsage:
-			out <- StepEvent{Type: StepEventUsage, Usage: ev.Usage}
+			stepEv := StepEvent{Type: StepEventUsage, Usage: ev.Usage}
+			sr.usage = ev.Usage
+			out <- stepEv
+			if cb != nil && cb.OnChunk != nil {
+				cb.OnChunk(stepEv)
+			}
 
 		case StreamEventSource:
 			if ev.Source != nil {
-				out <- StepEvent{Type: StepEventSource, Source: ev.Source}
+				stepEv := StepEvent{Type: StepEventSource, Source: ev.Source}
+				out <- stepEv
+				if cb != nil && cb.OnChunk != nil {
+					cb.OnChunk(stepEv)
+				}
 			}
 
 		case StreamEventFinish:
@@ -164,6 +248,9 @@ func consumeStream(eventCh <-chan StreamEvent, out chan<- StepEvent, acc *toolCa
 
 		case StreamEventError:
 			out <- StepEvent{Type: StepEventError, Error: ev.Error}
+			if cb != nil && cb.OnError != nil {
+				cb.OnError(ev.Error)
+			}
 			return sr, true
 		}
 	}
@@ -189,7 +276,7 @@ func emitFinalGeneration(
 		return false
 	}
 
-	sr, fatalErr := consumeStream(eventCh, out, nil)
+	sr, fatalErr := consumeStream(eventCh, out, nil, params.Callbacks)
 	if fatalErr {
 		return false
 	}
@@ -255,4 +342,85 @@ func buildToolResultMessage(toolCallID, output string) Message {
 			ToolResultOutput: output,
 		}},
 	}
+}
+
+func mergeProviderOptions(base, override map[string]any) map[string]any {
+	if base == nil {
+		return override
+	}
+	merged := make(map[string]any, len(base)+len(override))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range override {
+		merged[k] = v
+	}
+	return merged
+}
+
+func filterTools(tools []ToolDefinition, active []string) []ToolDefinition {
+	if len(active) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(active))
+	for _, name := range active {
+		set[name] = true
+	}
+	var filtered []ToolDefinition
+	for _, t := range tools {
+		if set[t.Name] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
+func emitOnStepFinish(cb *LifecycleCallbacks, step int, toolCalls []ToolCallInfo, toolResults []ToolResult, sr streamResult) {
+	if cb == nil || cb.OnStepFinish == nil {
+		return
+	}
+	cb.OnStepFinish(StepFinishEvent{
+		StepNumber:       step,
+		ToolCalls:        toolCalls,
+		ToolResults:      toolResults,
+		FinishReason:     sr.finish,
+		Usage:            sr.usage,
+		ProviderMetadata: sr.providerMeta,
+		Warnings:         sr.warnings,
+	})
+}
+
+func emitOnFinish(cb *LifecycleCallbacks, steps []StepResultInfo, sr streamResult) {
+	if cb == nil || cb.OnFinish == nil {
+		return
+	}
+	var totalText, totalReasoning string
+	var totalUsage Usage
+	var lastFinish FinishReason
+	var lastMeta map[string]any
+	for _, s := range steps {
+		totalText += s.Text
+		lastFinish = s.FinishReason
+	}
+	if sr.usage != nil {
+		totalUsage = Usage{
+			PromptTokens:     sr.usage.PromptTokens,
+			CompletionTokens: sr.usage.CompletionTokens,
+			TotalTokens:      sr.usage.TotalTokens,
+			ReasoningTokens:  sr.usage.ReasoningTokens,
+		}
+	}
+	totalReasoning = sr.reasoning
+	lastMeta = sr.providerMeta
+	if sr.finish != "" {
+		lastFinish = sr.finish
+	}
+	cb.OnFinish(FinishEvent{
+		Text:             totalText,
+		Reasoning:        totalReasoning,
+		Steps:            steps,
+		TotalUsage:       totalUsage,
+		FinishReason:     lastFinish,
+		ProviderMetadata: lastMeta,
+	})
 }
