@@ -61,7 +61,7 @@ func ToUIMessageStream(sr StreamEventer, msgID string, opts ToUIStreamOptions) <
 	var totalUsage UsageInfo
 
 	if needIntercept {
-		filteredCh, totalUsage = interceptEvents(eventCh, opts)
+		filteredCh = interceptEvents(eventCh, opts, &totalUsage)
 	}
 
 	producer := NewChunkProducer(msgID)
@@ -81,10 +81,9 @@ func ToUIMessageStream(sr StreamEventer, msgID string, opts ToUIStreamOptions) <
 }
 
 // interceptEvents filters and tracks usage from the raw engine event stream.
-// It returns a new filtered channel and the accumulated usage totals.
-func interceptEvents(eventCh <-chan engine.StepEvent, opts ToUIStreamOptions) (<-chan engine.StepEvent, UsageInfo) {
+// It writes accumulated usage into totalUsage (updated concurrently by the goroutine).
+func interceptEvents(eventCh <-chan engine.StepEvent, opts ToUIStreamOptions, totalUsage *UsageInfo) <-chan engine.StepEvent {
 	intercepted := make(chan engine.StepEvent, 64)
-	var totalUsage UsageInfo
 
 	go func() {
 		defer close(intercepted)
@@ -108,7 +107,7 @@ func interceptEvents(eventCh <-chan engine.StepEvent, opts ToUIStreamOptions) (<
 		}
 	}()
 
-	return intercepted, totalUsage
+	return intercepted
 }
 
 // wrapChunksWithMetadata wraps the chunk stream to attach metadata and/or filter lifecycle chunks.
