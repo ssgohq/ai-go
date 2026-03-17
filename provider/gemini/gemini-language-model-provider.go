@@ -140,9 +140,7 @@ func extraToolsForRequest(modelID string, req ai.LanguageModelRequest) []map[str
 
 // extraBodyFieldsForRequest returns provider-specific top-level request body fields
 // based on provider options. Currently handles thinkingConfig.
-//
-// NOTE: This function is ready to wire into openaichat.ModelConfig.ExtraBodyFieldsForRequest
-// once that hook is available in the openaichat package.
+// Wired via openaichat.ModelConfig.ExtraBodyFieldsForRequest in NewLanguageModel.
 func extraBodyFieldsForRequest(req ai.LanguageModelRequest) map[string]any {
 	opts := parseProviderOptions(req.ProviderOptions)
 	if opts.ThinkingConfig == nil {

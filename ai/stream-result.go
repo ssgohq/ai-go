@@ -1,6 +1,10 @@
 package ai
 
-import "github.com/open-ai-sdk/ai-go/internal/engine"
+import (
+	"sync"
+
+	"github.com/open-ai-sdk/ai-go/internal/engine"
+)
 
 // StreamResult wraps a streaming response with convenient accessors.
 // It fans out the source engine channel to text-delta and raw-event subscribers.
@@ -12,7 +16,8 @@ type StreamResult struct {
 	consumeCh chan engine.StepEvent
 
 	// done is closed when the fan-out goroutine has finished.
-	done chan struct{}
+	done      chan struct{}
+	drainOnce sync.Once
 }
 
 // NewStreamResult wraps an engine step-event channel in a StreamResult.
@@ -64,15 +69,20 @@ func (sr *StreamResult) Events() <-chan engine.StepEvent {
 // DrainUnused starts goroutines to consume channels that won't be read.
 // Call this when only Events() is being consumed (e.g. from StreamToWriter)
 // to prevent the fan-out goroutine from deadlocking on full buffers.
+//
+// Safe to call multiple times; only the first call spawns drain goroutines.
+// Must not be combined with Consume() — both read from consumeCh.
 func (sr *StreamResult) DrainUnused() {
-	go func() {
-		for range sr.textCh {
-		}
-	}()
-	go func() {
-		for range sr.consumeCh {
-		}
-	}()
+	sr.drainOnce.Do(func() {
+		go func() {
+			for range sr.textCh {
+			}
+		}()
+		go func() {
+			for range sr.consumeCh {
+			}
+		}()
+	})
 }
 
 // Consume blocks until the stream completes and returns the aggregated result.
