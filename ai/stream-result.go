@@ -96,9 +96,18 @@ func (sr *StreamResult) DrainUnused() {
 // Must not be combined with DrainUnused or direct channel reads.
 func (sr *StreamResult) ConsumeStream() {
 	sr.consumeOnce.Do(func() {
-		go func() { for range sr.textCh {} }()
-		go func() { for range sr.eventsCh {} }()
-		go func() { for range sr.consumeCh {} }()
+		go func() {
+			for range sr.textCh {
+			}
+		}()
+		go func() {
+			for range sr.eventsCh {
+			}
+		}()
+		go func() {
+			for range sr.consumeCh {
+			}
+		}()
 	})
 }
 

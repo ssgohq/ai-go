@@ -221,7 +221,10 @@ func toEngineParams(req GenerateTextRequest) engine.RunParams {
 				engResult.Model = &engineModelAdapter{result.Model}
 			}
 			if result.ToolChoice != nil {
-				engResult.ToolChoice = &engine.ToolChoice{Type: result.ToolChoice.Type, ToolName: result.ToolChoice.ToolName}
+				engResult.ToolChoice = &engine.ToolChoice{
+					Type:     result.ToolChoice.Type,
+					ToolName: result.ToolChoice.ToolName,
+				}
 			}
 			return engResult
 		}

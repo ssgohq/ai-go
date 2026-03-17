@@ -88,7 +88,8 @@ func PruneMessages(messages []Message, opts PruneOptions) []Message {
 			if shouldPruneReasoning && part.Type == ContentPartTypeReasoning {
 				continue
 			}
-			if shouldPruneToolCalls && (part.Type == ContentPartTypeToolCall || part.Type == ContentPartTypeToolResult) {
+			if shouldPruneToolCalls &&
+				(part.Type == ContentPartTypeToolCall || part.Type == ContentPartTypeToolResult) {
 				continue
 			}
 			filtered = append(filtered, part)

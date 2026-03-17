@@ -171,7 +171,12 @@ type streamResult struct {
 // consumeStream reads all events from a model stream, forwards them to the step
 // event channel, and accumulates tool calls via acc (may be nil for text-only calls).
 // Returns the accumulated result and true if a fatal error was emitted.
-func consumeStream(eventCh <-chan StreamEvent, out chan<- StepEvent, acc *toolCallAccumulator, cb *LifecycleCallbacks) (streamResult, bool) {
+func consumeStream(
+	eventCh <-chan StreamEvent,
+	out chan<- StepEvent,
+	acc *toolCallAccumulator,
+	cb *LifecycleCallbacks,
+) (streamResult, bool) {
 	var sr streamResult
 	for ev := range eventCh {
 		switch ev.Type {
@@ -184,7 +189,11 @@ func consumeStream(eventCh <-chan StreamEvent, out chan<- StepEvent, acc *toolCa
 			}
 
 		case StreamEventReasoningDelta:
-			stepEv := StepEvent{Type: StepEventReasoningDelta, ReasoningDelta: ev.TextDelta, ThoughtSignature: ev.ThoughtSignature}
+			stepEv := StepEvent{
+				Type:             StepEventReasoningDelta,
+				ReasoningDelta:   ev.TextDelta,
+				ThoughtSignature: ev.ThoughtSignature,
+			}
 			sr.reasoning += ev.TextDelta
 			out <- stepEv
 			if cb != nil && cb.OnChunk != nil {
@@ -375,7 +384,13 @@ func filterTools(tools []ToolDefinition, active []string) []ToolDefinition {
 	return filtered
 }
 
-func emitOnStepFinish(cb *LifecycleCallbacks, step int, toolCalls []ToolCallInfo, toolResults []ToolResult, sr streamResult) {
+func emitOnStepFinish(
+	cb *LifecycleCallbacks,
+	step int,
+	toolCalls []ToolCallInfo,
+	toolResults []ToolResult,
+	sr streamResult,
+) {
 	if cb == nil || cb.OnStepFinish == nil {
 		return
 	}

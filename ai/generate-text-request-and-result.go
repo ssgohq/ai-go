@@ -126,12 +126,12 @@ type FinishEvent struct {
 
 // ChunkEvent wraps a streaming engine event for the OnChunk callback.
 type ChunkEvent struct {
-	Type             string
-	TextDelta        string
-	ReasoningDelta   string
-	ToolCallID       string
-	ToolCallName     string
+	Type              string
+	TextDelta         string
+	ReasoningDelta    string
+	ToolCallID        string
+	ToolCallName      string
 	ToolCallArgsDelta string
-	StepNumber       int
-	FinishReason     FinishReason
+	StepNumber        int
+	FinishReason      FinishReason
 }
