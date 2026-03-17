@@ -132,9 +132,12 @@ func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
 
 			// Fire source hook when a source-url chunk is emitted.
 			if c.Type == ChunkSourceURL && a.sourceHook != nil {
-				sid, _ := c.Fields["sourceId"].(string)
-				surl, _ := c.Fields["url"].(string)
-				stitle, _ := c.Fields["title"].(string)
+				sid, ok1 := c.Fields["sourceId"].(string)
+				surl, ok2 := c.Fields["url"].(string)
+				stitle, ok3 := c.Fields["title"].(string)
+				_ = ok1
+				_ = ok2
+				_ = ok3
 				a.sourceHook(wr, sid, surl, stitle)
 			}
 

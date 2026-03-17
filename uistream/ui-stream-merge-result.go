@@ -119,9 +119,12 @@ func (wr *Writer) MergeStreamResult(sr StreamEventer, opts ...MergeOption) strin
 			wr.WriteChunk(c.Type, c.Fields)
 
 			if c.Type == ChunkSourceURL && cfg.sourceHook != nil {
-				sid, _ := c.Fields["sourceId"].(string)
-				surl, _ := c.Fields["url"].(string)
-				stitle, _ := c.Fields["title"].(string)
+				sid, ok1 := c.Fields["sourceId"].(string)
+				surl, ok2 := c.Fields["url"].(string)
+				stitle, ok3 := c.Fields["title"].(string)
+				_ = ok1
+				_ = ok2
+				_ = ok3
 				cfg.sourceHook(wr, sid, surl, stitle)
 			}
 
