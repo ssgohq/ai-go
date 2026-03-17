@@ -95,10 +95,6 @@ text := adapter.Stream(stream, &buf)
 // buf contains SSE-encoded AI SDK UI message stream chunks
 ```
 
-## Documentation
-
-- [UI Message Stream Contract Reference](docs/ui-message-stream-contract-reference.md) — chunk type parity table, chat request envelope schema, intentional differences from AI SDK Node v5, and integration examples.
-
 ## Requirements
 
 - Go 1.25+
