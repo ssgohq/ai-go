@@ -8,6 +8,8 @@ import (
 // an import cycle between the uistream and ai packages.
 type StreamEventer interface {
 	Events() <-chan engine.StepEvent
+	// DrainUnused prevents fan-out deadlocks when only Events() is consumed.
+	DrainUnused()
 }
 
 // mergeConfig holds options for MergeStreamResult.
@@ -57,6 +59,9 @@ func (wr *Writer) MergeStreamResult(sr StreamEventer, opts ...MergeOption) strin
 	// Use a bare ChunkProducer (no msgID) so it does not emit a duplicate start
 	// chunk — the caller manages start/finish lifecycle.
 	producer := newMergeProducer()
+
+	// Drain unused channels to prevent fan-out goroutine deadlock.
+	sr.DrainUnused()
 
 	ch := sr.Events()
 

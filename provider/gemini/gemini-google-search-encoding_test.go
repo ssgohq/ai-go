@@ -7,12 +7,23 @@ import (
 	"github.com/open-ai-sdk/ai-go/provider/internal/openaichat"
 )
 
+// supportedSearchModel is a model ID that supports Google Search grounding.
+const supportedSearchModel = "gemini-2.5-flash"
+
+// unsupportedSearchModel is a model ID that does NOT support Google Search grounding.
+const unsupportedSearchModel = "gemini-2.5-pro"
+
 // encodeWithExtraTools is a test helper that runs EncodeRequest with ExtraTools derived
 // from gemini ProviderOptions so tests don't need to spin up an HTTP server.
+// Uses a supported model by default so Google Search is not filtered out.
 func encodeWithExtraTools(req ai.LanguageModelRequest) (openaichat.ChatRequest, error) {
-	extra := extraToolsForRequest(req)
+	return encodeWithExtraToolsForModel(supportedSearchModel, req)
+}
+
+func encodeWithExtraToolsForModel(modelID string, req ai.LanguageModelRequest) (openaichat.ChatRequest, error) {
+	extra := extraToolsForRequest(modelID, req)
 	return openaichat.EncodeRequest(openaichat.EncodeRequestParams{
-		ModelID:            "gemini-2.5-pro",
+		ModelID:            modelID,
 		SanitizeTools:      sanitizeToolSchemas,
 		IncludeStreamUsage: true,
 		ExtraTools:         extra,
@@ -273,6 +284,98 @@ func TestGoogleSearch_NoConfigNoGoogleSearchKey(t *testing.T) {
 	}
 }
 
+// --- Model restriction tests (bead aisdk-27j.4) ---
+
+func TestGoogleSearch_UnsupportedModel_ToolNotAdded(t *testing.T) {
+	// gemini-2.5-pro does NOT support google_search; tool should be omitted.
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("latest news")},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{EnableGoogleSearch: true},
+		},
+	}
+
+	cr, err := encodeWithExtraToolsForModel(unsupportedSearchModel, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cr.Tools) != 0 {
+		t.Errorf("expected no tools for unsupported model %s, got %d", unsupportedSearchModel, len(cr.Tools))
+	}
+}
+
+func TestGoogleSearch_SupportedModels_ToolAdded(t *testing.T) {
+	supported := []string{
+		"gemini-2.5-flash",
+		"gemini-2.5-flash-lite",
+		"gemini-3-flash-preview",
+		"gemini-3-pro-preview",
+	}
+
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("latest news")},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{EnableGoogleSearch: true},
+		},
+	}
+
+	for _, modelID := range supported {
+		t.Run(modelID, func(t *testing.T) {
+			cr, err := encodeWithExtraToolsForModel(modelID, req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(cr.Tools) != 1 {
+				t.Errorf("model %s: expected 1 google_search tool, got %d", modelID, len(cr.Tools))
+			}
+			if len(cr.Tools) > 0 && cr.Tools[0]["type"] != "google_search" {
+				t.Errorf("model %s: expected type=google_search, got %v", modelID, cr.Tools[0]["type"])
+			}
+		})
+	}
+}
+
+func TestGoogleSearch_UnsupportedModel_WarningEmitted(t *testing.T) {
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("search")},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{EnableGoogleSearch: true},
+		},
+	}
+
+	warnings := warningsForRequest(unsupportedSearchModel, req)
+	if len(warnings) == 0 {
+		t.Fatal("expected warning for unsupported model, got none")
+	}
+
+	found := false
+	for _, w := range warnings {
+		if w.Setting == "enableGoogleSearch" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected enableGoogleSearch warning, got warnings: %v", warnings)
+	}
+}
+
+func TestGoogleSearch_SupportedModel_NoUnsupportedWarning(t *testing.T) {
+	req := ai.LanguageModelRequest{
+		Messages: []ai.Message{ai.UserMessage("search")},
+		ProviderOptions: map[string]any{
+			"gemini": ProviderOptions{EnableGoogleSearch: true},
+		},
+	}
+
+	warnings := warningsForRequest(supportedSearchModel, req)
+	for _, w := range warnings {
+		if w.Setting == "enableGoogleSearch" {
+			t.Errorf("unexpected unsupported-model warning for supported model %s", supportedSearchModel)
+		}
+	}
+}
+
 // --- Warning tests ---
 
 func TestGoogleSearch_WarningTopKWithSearch(t *testing.T) {
@@ -285,9 +388,9 @@ func TestGoogleSearch_WarningTopKWithSearch(t *testing.T) {
 		},
 	}
 
-	warnings := warningsForRequest(req)
+	warnings := warningsForRequest(supportedSearchModel, req)
 	if len(warnings) != 1 {
-		t.Fatalf("expected 1 warning, got %d", len(warnings))
+		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
 	}
 	if warnings[0].Type != "unsupported-setting" {
 		t.Errorf("expected type=unsupported-setting, got %v", warnings[0].Type)
@@ -307,9 +410,9 @@ func TestGoogleSearch_WarningSeedWithSearch(t *testing.T) {
 		},
 	}
 
-	warnings := warningsForRequest(req)
+	warnings := warningsForRequest(supportedSearchModel, req)
 	if len(warnings) != 1 {
-		t.Fatalf("expected 1 warning, got %d", len(warnings))
+		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
 	}
 	if warnings[0].Type != "unsupported-setting" {
 		t.Errorf("expected type=unsupported-setting, got %v", warnings[0].Type)
@@ -330,9 +433,9 @@ func TestGoogleSearch_WarningBothTopKAndSeedWithSearch(t *testing.T) {
 		},
 	}
 
-	warnings := warningsForRequest(req)
+	warnings := warningsForRequest(supportedSearchModel, req)
 	if len(warnings) != 2 {
-		t.Fatalf("expected 2 warnings, got %d", len(warnings))
+		t.Fatalf("expected 2 warnings, got %d: %v", len(warnings), warnings)
 	}
 }
 
@@ -344,7 +447,7 @@ func TestGoogleSearch_NoWarningsWithoutSearch(t *testing.T) {
 		Settings: ai.CallSettings{TopK: &topK, Seed: &seed},
 	}
 
-	warnings := warningsForRequest(req)
+	warnings := warningsForRequest(supportedSearchModel, req)
 	if len(warnings) != 0 {
 		t.Errorf("expected no warnings when search is disabled, got %d", len(warnings))
 	}
@@ -358,7 +461,7 @@ func TestGoogleSearch_NoWarningsNormalSearch(t *testing.T) {
 		},
 	}
 
-	warnings := warningsForRequest(req)
+	warnings := warningsForRequest(supportedSearchModel, req)
 	if len(warnings) != 0 {
 		t.Errorf("expected no warnings for normal search request, got %d", len(warnings))
 	}

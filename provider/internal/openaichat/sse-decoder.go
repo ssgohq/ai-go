@@ -16,9 +16,10 @@ import (
 type StreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			Thought   *bool  `json:"thought,omitempty"`
-			ToolCalls []struct {
+			Content          string `json:"content"`
+			Thought          *bool  `json:"thought,omitempty"`
+			ThoughtSignature string `json:"thought_signature,omitempty"`
+			ToolCalls        []struct {
 				Index        int    `json:"index"`
 				ID           string `json:"id"`
 				ExtraContent *struct {
@@ -35,9 +36,10 @@ type StreamChunk struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+		PromptTokens       int `json:"prompt_tokens"`
+		CompletionTokens   int `json:"completion_tokens"`
+		TotalTokens        int `json:"total_tokens"`
+		ThoughtsTokenCount int `json:"thoughts_token_count,omitempty"`
 	} `json:"usage"`
 	// ProviderMetadata holds provider-specific metadata from the response (e.g. Gemini groundingMetadata).
 	ProviderMetadata map[string]any `json:"provider_metadata,omitempty"`
@@ -130,6 +132,7 @@ func emitChunkEvents(
 				PromptTokens:     chunk.Usage.PromptTokens,
 				CompletionTokens: chunk.Usage.CompletionTokens,
 				TotalTokens:      chunk.Usage.TotalTokens,
+				ReasoningTokens:  chunk.Usage.ThoughtsTokenCount,
 			},
 		}
 	}
@@ -162,11 +165,19 @@ func emitChunkEvents(
 	}
 
 	// Text or reasoning delta.
-	if choice.Delta.Content != "" {
+	if choice.Delta.Content != "" || choice.Delta.ThoughtSignature != "" {
 		if choice.Delta.Thought != nil && *choice.Delta.Thought {
-			ch <- ai.StreamEvent{Type: ai.StreamEventReasoningDelta, TextDelta: choice.Delta.Content}
-		} else {
-			ch <- ai.StreamEvent{Type: ai.StreamEventTextDelta, TextDelta: choice.Delta.Content}
+			ch <- ai.StreamEvent{
+				Type:             ai.StreamEventReasoningDelta,
+				TextDelta:        choice.Delta.Content,
+				ThoughtSignature: choice.Delta.ThoughtSignature,
+			}
+		} else if choice.Delta.Content != "" {
+			ch <- ai.StreamEvent{
+				Type:             ai.StreamEventTextDelta,
+				TextDelta:        choice.Delta.Content,
+				ThoughtSignature: choice.Delta.ThoughtSignature,
+			}
 		}
 	}
 

@@ -122,7 +122,7 @@ func consumeStream(eventCh <-chan StreamEvent, out chan<- StepEvent, acc *toolCa
 			out <- StepEvent{Type: StepEventTextDelta, TextDelta: ev.TextDelta}
 
 		case StreamEventReasoningDelta:
-			out <- StepEvent{Type: StepEventReasoningDelta, ReasoningDelta: ev.TextDelta}
+			out <- StepEvent{Type: StepEventReasoningDelta, ReasoningDelta: ev.TextDelta, ThoughtSignature: ev.ThoughtSignature}
 
 		case StreamEventToolCallDelta:
 			if acc != nil {
