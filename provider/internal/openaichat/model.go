@@ -140,7 +140,15 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 				m.cfg.ProviderName, resp.StatusCode, readErr,
 			)
 		}
-		slog.Error("[OPENAICHAT] API error", "status", resp.StatusCode, "body", string(respBody), "provider", m.cfg.ProviderName)
+		slog.Error(
+			"[OPENAICHAT] API error",
+			"status",
+			resp.StatusCode,
+			"body",
+			string(respBody),
+			"provider",
+			m.cfg.ProviderName,
+		)
 		return nil, fmt.Errorf(
 			"%s: unexpected status %d: %s",
 			m.cfg.ProviderName, resp.StatusCode, string(respBody),
