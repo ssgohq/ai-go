@@ -1,5 +1,7 @@
 package uistream
 
+import "encoding/json"
+
 // ChatRequestEnvelope is the canonical HTTP request body for the /chat endpoint.
 // Both Go backends and Swift clients use this shape.
 //
@@ -88,9 +90,10 @@ func ResolveMessageIDFromEnvelope(env ChatRequestEnvelope, fallback string) stri
 type EnvelopePartType string
 
 const (
-	EnvelopePartTypeText  EnvelopePartType = "text"
-	EnvelopePartTypeImage EnvelopePartType = "image"
-	EnvelopePartTypeFile  EnvelopePartType = "file"
+	EnvelopePartTypeText         EnvelopePartType = "text"
+	EnvelopePartTypeImage        EnvelopePartType = "image"
+	EnvelopePartTypeFile         EnvelopePartType = "file"
+	EnvelopePartTypeToolInvocation EnvelopePartType = "tool-invocation"
 )
 
 // EnvelopePartUnion holds one content part inside an EnvelopeMessage.
@@ -118,4 +121,16 @@ type EnvelopePartUnion struct {
 	// Data holds inline binary content for image or file parts (base64-encoded in JSON).
 	// When set, URL is ignored and the data is sent inline.
 	Data []byte `json:"data,omitempty"`
+
+	// Tool-invocation part fields (Type == "tool-invocation").
+	// ToolCallID is the unique identifier of the tool call.
+	ToolCallID string `json:"toolCallId,omitempty"`
+	// ToolName is the function name of the tool.
+	ToolName string `json:"toolName,omitempty"`
+	// Input is the JSON-encoded tool call arguments.
+	Input json.RawMessage `json:"input,omitempty"`
+	// Output is the string result from the tool execution (present when State == "result").
+	Output string `json:"output,omitempty"`
+	// State is the tool invocation state: "partial-call", "call", "result", "error".
+	State string `json:"state,omitempty"`
 }

@@ -146,10 +146,11 @@ func (cp *ChunkProducer) chunksTextDelta(ev engine.StepEvent) ([]Chunk, string) 
 		out = append(out, Chunk{Type: ChunkTextStart, Fields: map[string]any{"id": cp.textBlockID}})
 		cp.textStarted = true
 	}
-	out = append(out, Chunk{Type: ChunkTextDelta, Fields: map[string]any{
+	fields := map[string]any{
 		"id":    cp.textBlockID,
 		"delta": ev.TextDelta,
-	}})
+	}
+	out = append(out, Chunk{Type: ChunkTextDelta, Fields: withProviderMetadata(fields, ev.ProviderMetadata)})
 	return out, ev.TextDelta
 }
 
@@ -162,10 +163,11 @@ func (cp *ChunkProducer) chunksReasoningDelta(ev engine.StepEvent) []Chunk {
 	if ev.ThoughtSignature != "" {
 		cp.lastThoughtSignature = ev.ThoughtSignature
 	}
-	out = append(out, Chunk{Type: ChunkReasoningDelta, Fields: map[string]any{
+	fields := map[string]any{
 		"id":    cp.textBlockID,
 		"delta": ev.ReasoningDelta,
-	}})
+	}
+	out = append(out, Chunk{Type: ChunkReasoningDelta, Fields: withProviderMetadata(fields, ev.ProviderMetadata)})
 	return out
 }
 
@@ -222,16 +224,19 @@ func (cp *ChunkProducer) chunksToolResult(ev engine.StepEvent) []Chunk {
 		parsedOutput = map[string]string{"result": tr.Output}
 	}
 
+	inputFields := withProviderMetadata(map[string]any{
+		"toolCallId": tr.ID,
+		"toolName":   tr.Name,
+		"input":      parsedArgs,
+	}, ev.ProviderMetadata)
+	outputFields := withProviderMetadata(map[string]any{
+		"toolCallId": tr.ID,
+		"output":     parsedOutput,
+	}, ev.ProviderMetadata)
+
 	return []Chunk{
-		{Type: ChunkToolInputAvailable, Fields: map[string]any{
-			"toolCallId": tr.ID,
-			"toolName":   tr.Name,
-			"input":      parsedArgs,
-		}},
-		{Type: ChunkToolOutputAvailable, Fields: map[string]any{
-			"toolCallId": tr.ID,
-			"output":     parsedOutput,
-		}},
+		{Type: ChunkToolInputAvailable, Fields: inputFields},
+		{Type: ChunkToolOutputAvailable, Fields: outputFields},
 	}
 }
 
@@ -285,6 +290,19 @@ func itoa(n int) string {
 
 func isValidJSON(s string) bool {
 	return json.Valid([]byte(s))
+}
+
+// withProviderMetadata attaches providerMetadata to a Fields map when pm is non-nil.
+// Returns the (possibly newly allocated) map.
+func withProviderMetadata(fields map[string]any, pm map[string]any) map[string]any {
+	if pm == nil {
+		return fields
+	}
+	if fields == nil {
+		fields = make(map[string]any)
+	}
+	fields["providerMetadata"] = pm
+	return fields
 }
 
 // MergeChunks merges multiple chunk channels into one output channel.

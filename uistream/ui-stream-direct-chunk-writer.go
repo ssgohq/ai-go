@@ -178,3 +178,10 @@ func (wr *Writer) WriteToolApprovalRequest(approvalID, toolCallID, toolName stri
 		"args":       args,
 	}})
 }
+
+// WriteChunkWithProviderMetadata emits a named chunk with arbitrary fields plus
+// optional provider-specific metadata. When providerMeta is nil, the
+// providerMetadata key is omitted from the output entirely.
+func (wr *Writer) WriteChunkWithProviderMetadata(typ string, fields, providerMeta map[string]any) {
+	WriteSSE(wr.w, Chunk{Type: typ, Fields: withProviderMetadata(fields, providerMeta)})
+}
