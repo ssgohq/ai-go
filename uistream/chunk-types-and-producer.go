@@ -112,6 +112,8 @@ func (cp *ChunkProducer) translateEvent(ev engine.StepEvent) ([]Chunk, string) {
 		return cp.chunksToolCallDelta(ev), ""
 	case engine.StepEventToolResult:
 		return cp.chunksToolResult(ev), ""
+	case engine.StepEventSource:
+		return cp.chunksSource(ev), ""
 	case engine.StepEventStepEnd:
 		cp.lastFinishReason = string(ev.FinishReason)
 		return cp.chunksStepEnd(), ""
@@ -231,6 +233,17 @@ func (cp *ChunkProducer) chunksToolResult(ev engine.StepEvent) []Chunk {
 			"output":     parsedOutput,
 		}},
 	}
+}
+
+func (cp *ChunkProducer) chunksSource(ev engine.StepEvent) []Chunk {
+	if ev.Source == nil || ev.Source.URL == "" {
+		return nil
+	}
+	return []Chunk{{Type: ChunkSourceURL, Fields: map[string]any{
+		"sourceId": ev.Source.ID,
+		"url":      ev.Source.URL,
+		"title":    ev.Source.Title,
+	}}}
 }
 
 func (cp *ChunkProducer) chunksStepEnd() []Chunk {

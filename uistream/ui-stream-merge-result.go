@@ -15,6 +15,7 @@ type StreamEventer interface {
 // mergeConfig holds options for MergeStreamResult.
 type mergeConfig struct {
 	toolResultHook ToolResultHook
+	sourceHook     SourceHook
 	onFinish       func(text string)
 }
 
@@ -25,6 +26,13 @@ type MergeOption func(*mergeConfig)
 func MergeWithToolResultHook(hook ToolResultHook) MergeOption {
 	return func(c *mergeConfig) {
 		c.toolResultHook = hook
+	}
+}
+
+// MergeWithSourceHook sets a callback invoked when a source-url chunk is emitted.
+func MergeWithSourceHook(hook SourceHook) MergeOption {
+	return func(c *mergeConfig) {
+		c.sourceHook = hook
 	}
 }
 
@@ -109,6 +117,13 @@ func (wr *Writer) MergeStreamResult(sr StreamEventer, opts ...MergeOption) strin
 			wr.WriteError(msg)
 		default:
 			wr.WriteChunk(c.Type, c.Fields)
+
+			if c.Type == ChunkSourceURL && cfg.sourceHook != nil {
+				sid, _ := c.Fields["sourceId"].(string)
+				surl, _ := c.Fields["url"].(string)
+				stitle, _ := c.Fields["title"].(string)
+				cfg.sourceHook(wr, sid, surl, stitle)
+			}
 
 			if c.Type == ChunkToolOutputAvailable && cfg.toolResultHook != nil {
 				tcID, ok := c.Fields["toolCallId"].(string)
