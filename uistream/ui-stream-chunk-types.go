@@ -31,10 +31,10 @@ const (
 	ChunkAbort = "abort"
 
 	// Tool error and approval chunk types (AI SDK Node v5 parity).
-	ChunkToolInputError       = "tool-input-error"
-	ChunkToolOutputError      = "tool-output-error"
-	ChunkToolOutputDenied     = "tool-output-denied"
-	ChunkToolApprovalRequest  = "tool-approval-request"
+	ChunkToolInputError      = "tool-input-error"
+	ChunkToolOutputError     = "tool-output-error"
+	ChunkToolOutputDenied    = "tool-output-denied"
+	ChunkToolApprovalRequest = "tool-approval-request"
 
 	// Structured source types.
 	ChunkSourceURL      = "source-url"

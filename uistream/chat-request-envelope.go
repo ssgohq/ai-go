@@ -90,9 +90,9 @@ func ResolveMessageIDFromEnvelope(env ChatRequestEnvelope, fallback string) stri
 type EnvelopePartType string
 
 const (
-	EnvelopePartTypeText         EnvelopePartType = "text"
-	EnvelopePartTypeImage        EnvelopePartType = "image"
-	EnvelopePartTypeFile         EnvelopePartType = "file"
+	EnvelopePartTypeText           EnvelopePartType = "text"
+	EnvelopePartTypeImage          EnvelopePartType = "image"
+	EnvelopePartTypeFile           EnvelopePartType = "file"
 	EnvelopePartTypeToolInvocation EnvelopePartType = "tool-invocation"
 )
 

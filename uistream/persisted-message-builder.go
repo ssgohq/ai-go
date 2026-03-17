@@ -40,68 +40,77 @@ func NewPersistedMessageBuilder() *PersistedMessageBuilder {
 func (b *PersistedMessageBuilder) ObserveChunk(c Chunk) {
 	switch c.Type {
 	case ChunkTextStart:
-		b.textAccum.Reset()
-
+		b.observeTextStart()
 	case ChunkTextDelta:
-		if delta, ok := c.Fields["delta"].(string); ok {
-			b.textAccum.WriteString(delta)
-		}
-
+		b.observeTextDelta(c)
 	case ChunkTextEnd:
-		text := b.textAccum.String()
-		if text != "" {
-			b.parts = append(b.parts, map[string]any{"type": "text", "text": text})
-			b.textAccum.Reset()
-		}
-
+		b.observeTextEnd()
 	case ChunkReasoningStart:
-		b.reasoningAccum.Reset()
-		b.lastSignature = ""
-
+		b.observeReasoningStart()
 	case ChunkReasoningDelta:
-		if delta, ok := c.Fields["delta"].(string); ok {
-			b.reasoningAccum.WriteString(delta)
-		}
-		if sig, ok := c.Fields["signature"].(string); ok && sig != "" {
-			b.lastSignature = sig
-		}
-
+		b.observeReasoningDelta(c)
 	case ChunkReasoningEnd:
 		b.observeReasoningEnd(c)
-
 	case ChunkToolInputAvailable:
 		b.observeToolInput(c)
-
 	case ChunkToolOutputAvailable:
 		b.observeToolOutput(c)
-
 	case ChunkToolInputError:
 		b.observeToolInputError(c)
-
 	case ChunkToolOutputError:
 		b.observeToolOutputError(c)
-
 	case ChunkToolOutputDenied:
 		b.observeToolOutputDenied(c)
-
 	case ChunkSourceURL:
 		b.observeSourceURL(c)
-
 	case ChunkSourceDocument:
 		b.observeSourceDocument(c)
-
 	case ChunkFile:
 		b.observeFile(c)
-
 	case ChunkMessageMetadata:
-		if meta := c.Fields["messageMetadata"]; meta != nil {
-			if raw, err := json.Marshal(meta); err == nil {
-				b.metadata = raw
-			}
-		}
-
+		b.observeMessageMetadata(c)
 	default:
 		b.observeDataChunk(c)
+	}
+}
+
+func (b *PersistedMessageBuilder) observeTextStart() {
+	b.textAccum.Reset()
+}
+
+func (b *PersistedMessageBuilder) observeTextDelta(c Chunk) {
+	if delta, ok := c.Fields["delta"].(string); ok {
+		b.textAccum.WriteString(delta)
+	}
+}
+
+func (b *PersistedMessageBuilder) observeTextEnd() {
+	text := b.textAccum.String()
+	if text != "" {
+		b.parts = append(b.parts, map[string]any{"type": "text", "text": text})
+		b.textAccum.Reset()
+	}
+}
+
+func (b *PersistedMessageBuilder) observeReasoningStart() {
+	b.reasoningAccum.Reset()
+	b.lastSignature = ""
+}
+
+func (b *PersistedMessageBuilder) observeReasoningDelta(c Chunk) {
+	if delta, ok := c.Fields["delta"].(string); ok {
+		b.reasoningAccum.WriteString(delta)
+	}
+	if sig, ok := c.Fields["signature"].(string); ok && sig != "" {
+		b.lastSignature = sig
+	}
+}
+
+func (b *PersistedMessageBuilder) observeMessageMetadata(c Chunk) {
+	if meta := c.Fields["messageMetadata"]; meta != nil {
+		if raw, err := json.Marshal(meta); err == nil {
+			b.metadata = raw
+		}
 	}
 }
 
@@ -167,9 +176,12 @@ func (b *PersistedMessageBuilder) observeToolOutput(c Chunk) {
 }
 
 func (b *PersistedMessageBuilder) observeToolInputError(c Chunk) {
-	tcID, _ := c.Fields["toolCallId"].(string)
-	toolName, _ := c.Fields["toolName"].(string)
-	errText, _ := c.Fields["errorText"].(string)
+	tcID, ok1 := c.Fields["toolCallId"].(string)
+	toolName, ok2 := c.Fields["toolName"].(string)
+	errText, ok3 := c.Fields["errorText"].(string)
+	_ = ok1
+	_ = ok2
+	_ = ok3
 	if tcID == "" {
 		return
 	}
