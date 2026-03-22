@@ -49,7 +49,7 @@ func NewStreamResult(ch <-chan engine.StepEvent) *StreamResult {
 }
 
 // ensureStarted launches the fan-out goroutine exactly once.
-// It checks which channels have been requested and auto-drains the rest.
+// It snapshots which channels have been requested and skips unrequested ones.
 func (sr *StreamResult) ensureStarted() {
 	sr.startOnce.Do(func() {
 		sr.mu.Lock()
@@ -65,19 +65,12 @@ func (sr *StreamResult) ensureStarted() {
 			defer close(sr.consumeCh)
 
 			for ev := range sr.src {
-				// textCh — send if requested, else drop.
-				if ev.Type == engine.StepEventTextDelta {
-					if wantText {
-						sr.textCh <- ev.TextDelta
-					}
+				if ev.Type == engine.StepEventTextDelta && wantText {
+					sr.textCh <- ev.TextDelta
 				}
-
-				// eventsCh — send if requested, else drop.
 				if wantEvents {
 					sr.eventsCh <- ev
 				}
-
-				// consumeCh — send if requested, else drop.
 				if wantConsume {
 					sr.consumeCh <- ev
 				}
@@ -120,10 +113,15 @@ func (sr *StreamResult) Events() <-chan engine.StepEvent {
 // for backward compatibility and as an explicit safety net.
 func (sr *StreamResult) DrainUnused() {
 	sr.drainOnce.Do(func() {
-		// Mark channels as requested so the fan-out sends to them,
-		// then drain them. This preserves the old behavior for callers
-		// that relied on DrainUnused + reading one channel.
-		sr.ensureStarted()
+		// Mark textCh and consumeCh as requested so the fan-out sends to them,
+		// then drain them in background goroutines.
+		// NOTE: Do NOT call ensureStarted() here — the caller will call Events()
+		// (or TextStream/Consume) which triggers ensureStarted with all flags set.
+		sr.mu.Lock()
+		sr.textRequested = true
+		sr.consumeRequested = true
+		sr.mu.Unlock()
+
 		go func() {
 			for range sr.textCh {
 			}
