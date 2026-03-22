@@ -8,6 +8,14 @@ import (
 
 // StreamResult wraps a streaming response with convenient accessors.
 // It fans out the source engine channel to text-delta and raw-event subscribers.
+//
+// Callers must consume at least one channel (Events, TextStream, or Consume)
+// or call DrainUnused/ConsumeStream to prevent goroutine leaks.
+//
+// The fan-out goroutine is started lazily on the first call to Events(),
+// TextStream(), Consume(), DrainUnused(), or ConsumeStream(). Channels that
+// are not requested before the fan-out starts are automatically drained, so
+// callers never need to worry about deadlocks from unconsumed channels.
 type StreamResult struct {
 	src <-chan engine.StepEvent
 
@@ -16,9 +24,16 @@ type StreamResult struct {
 	consumeCh chan engine.StepEvent
 
 	// done is closed when the fan-out goroutine has finished.
-	done        chan struct{}
-	drainOnce   sync.Once
-	consumeOnce sync.Once
+	done chan struct{}
+
+	// Track which channels were requested before fan-out starts.
+	mu            sync.Mutex
+	startOnce     sync.Once
+	drainOnce     sync.Once
+	consumeOnce   sync.Once
+	textRequested bool
+	eventsRequested  bool
+	consumeRequested bool
 }
 
 // NewStreamResult wraps an engine step-event channel in a StreamResult.
@@ -30,32 +45,54 @@ func NewStreamResult(ch <-chan engine.StepEvent) *StreamResult {
 		consumeCh: make(chan engine.StepEvent, 64),
 		done:      make(chan struct{}),
 	}
-	sr.start()
 	return sr
 }
 
-// start launches the fan-out goroutine exactly once.
-func (sr *StreamResult) start() {
-	go func() {
-		defer close(sr.done)
-		defer close(sr.textCh)
-		defer close(sr.eventsCh)
-		defer close(sr.consumeCh)
+// ensureStarted launches the fan-out goroutine exactly once.
+// It checks which channels have been requested and auto-drains the rest.
+func (sr *StreamResult) ensureStarted() {
+	sr.startOnce.Do(func() {
+		sr.mu.Lock()
+		wantText := sr.textRequested
+		wantEvents := sr.eventsRequested
+		wantConsume := sr.consumeRequested
+		sr.mu.Unlock()
 
-		for ev := range sr.src {
-			// Fan out to all three channels.
-			if ev.Type == engine.StepEventTextDelta {
-				sr.textCh <- ev.TextDelta
+		go func() {
+			defer close(sr.done)
+			defer close(sr.textCh)
+			defer close(sr.eventsCh)
+			defer close(sr.consumeCh)
+
+			for ev := range sr.src {
+				// textCh — send if requested, else drop.
+				if ev.Type == engine.StepEventTextDelta {
+					if wantText {
+						sr.textCh <- ev.TextDelta
+					}
+				}
+
+				// eventsCh — send if requested, else drop.
+				if wantEvents {
+					sr.eventsCh <- ev
+				}
+
+				// consumeCh — send if requested, else drop.
+				if wantConsume {
+					sr.consumeCh <- ev
+				}
 			}
-			sr.eventsCh <- ev
-			sr.consumeCh <- ev
-		}
-	}()
+		}()
+	})
 }
 
 // TextStream returns a channel yielding text deltas only.
 // The channel is closed when the stream completes.
 func (sr *StreamResult) TextStream() <-chan string {
+	sr.mu.Lock()
+	sr.textRequested = true
+	sr.mu.Unlock()
+	sr.ensureStarted()
 	return sr.textCh
 }
 
@@ -64,6 +101,10 @@ func (sr *StreamResult) TextStream() <-chan string {
 // full event visibility.
 // The channel is closed when the stream completes.
 func (sr *StreamResult) Events() <-chan engine.StepEvent {
+	sr.mu.Lock()
+	sr.eventsRequested = true
+	sr.mu.Unlock()
+	sr.ensureStarted()
 	return sr.eventsCh
 }
 
@@ -73,8 +114,16 @@ func (sr *StreamResult) Events() <-chan engine.StepEvent {
 //
 // Safe to call multiple times; only the first call spawns drain goroutines.
 // Must not be combined with Consume() — both read from consumeCh.
+//
+// NOTE: With the lazy fan-out design, DrainUnused is no longer strictly
+// required — unrequested channels are automatically skipped. It is kept
+// for backward compatibility and as an explicit safety net.
 func (sr *StreamResult) DrainUnused() {
 	sr.drainOnce.Do(func() {
+		// Mark channels as requested so the fan-out sends to them,
+		// then drain them. This preserves the old behavior for callers
+		// that relied on DrainUnused + reading one channel.
+		sr.ensureStarted()
 		go func() {
 			for range sr.textCh {
 			}
@@ -96,6 +145,12 @@ func (sr *StreamResult) DrainUnused() {
 // Must not be combined with DrainUnused or direct channel reads.
 func (sr *StreamResult) ConsumeStream() {
 	sr.consumeOnce.Do(func() {
+		sr.mu.Lock()
+		sr.textRequested = true
+		sr.eventsRequested = true
+		sr.consumeRequested = true
+		sr.mu.Unlock()
+		sr.ensureStarted()
 		go func() {
 			for range sr.textCh {
 			}
@@ -115,6 +170,11 @@ func (sr *StreamResult) ConsumeStream() {
 // It reads from its own internal channel so it does not interfere with
 // TextStream or Events consumers.
 func (sr *StreamResult) Consume() (*GenerateTextResult, error) {
+	sr.mu.Lock()
+	sr.consumeRequested = true
+	sr.mu.Unlock()
+	sr.ensureStarted()
+
 	result := &GenerateTextResult{}
 	var currentStep *StepOutput
 
