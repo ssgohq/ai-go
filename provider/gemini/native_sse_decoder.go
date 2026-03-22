@@ -182,6 +182,7 @@ func emitNativeChunkEvents(
 						ToolCallID:        fmt.Sprintf("call_%d", *toolCallIndex),
 						ToolCallName:      part.FunctionCall.Name,
 						ToolCallArgsDelta: args,
+						ThoughtSignature:  part.ThoughtSignature,
 					}
 					*toolCallIndex++
 					continue
