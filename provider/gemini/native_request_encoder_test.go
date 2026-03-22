@@ -210,6 +210,24 @@ func TestEncodeNativeRequest(t *testing.T) {
 		assertEqual(t, parts[0].InlineData.Data, "iVBOR")
 	})
 
+	t.Run("image with inline Data bytes (ImageDataPart)", func(t *testing.T) {
+		req := ai.LanguageModelRequest{
+			Messages: []ai.Message{
+				{Role: ai.RoleUser, Content: []ai.ContentPart{
+					ai.ImageDataPart([]byte("PNG data"), "image/png"),
+				}},
+			},
+		}
+		nr := encodeNativeRequest(req)
+
+		parts := nr.Contents[0].Parts
+		assertEqual(t, len(parts), 1)
+		assertNotNilPtr(t, parts[0].InlineData)
+		assertEqual(t, parts[0].InlineData.MimeType, "image/png")
+		assertEqual(t, parts[0].InlineData.Data, "UE5HIGRhdGE=") // base64("PNG data")
+		assertNilPtr(t, parts[0].FileData)
+	})
+
 	t.Run("file with inline Data bytes", func(t *testing.T) {
 		req := ai.LanguageModelRequest{
 			Messages: []ai.Message{

@@ -166,7 +166,7 @@ func encodeUserParts(parts []ai.ContentPart) []nativePart {
 		case ai.ContentPartTypeText:
 			out = append(out, nativePart{Text: p.Text})
 		case ai.ContentPartTypeImageURL:
-			out = append(out, encodeMediaFromURL(p.ImageURL, p.MimeType))
+			out = append(out, encodeImagePart(p))
 		case ai.ContentPartTypeFile:
 			out = append(out, encodeFilePart(p))
 		}
@@ -199,7 +199,7 @@ func encodeAssistantParts(parts []ai.ContentPart) []nativePart {
 			}
 			out = append(out, np)
 		case ai.ContentPartTypeImageURL:
-			out = append(out, encodeMediaFromURL(p.ImageURL, p.MimeType))
+			out = append(out, encodeImagePart(p))
 		case ai.ContentPartTypeFile:
 			out = append(out, encodeFilePart(p))
 		}
@@ -224,6 +224,20 @@ func encodeToolParts(parts []ai.ContentPart) []nativePart {
 		}
 	}
 	return out
+}
+
+// encodeImagePart encodes an image ContentPart as inlineData or fileData.
+// It handles both inline binary data (from ImageDataPart) and URL references (from ImageURLPart).
+func encodeImagePart(p ai.ContentPart) nativePart {
+	if len(p.Data) > 0 {
+		return nativePart{
+			InlineData: &nativeInlineData{
+				MimeType: p.MimeType,
+				Data:     base64.StdEncoding.EncodeToString(p.Data),
+			},
+		}
+	}
+	return encodeMediaFromURL(p.ImageURL, p.MimeType)
 }
 
 // encodeMediaFromURL converts a URL (possibly data: URI) to an inlineData or fileData part.
