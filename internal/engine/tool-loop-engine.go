@@ -323,7 +323,7 @@ func executeToolCalls(
 			}
 		}
 
-		*history = append(*history, buildToolResultMessage(tc.id, modelOutput))
+		*history = append(*history, buildToolResultMessage(tc.id, tc.name, modelOutput))
 		out <- StepEvent{Type: StepEventToolResult, ToolResult: result}
 		toolNames = append(toolNames, tc.name)
 		stepToolCalls = append(stepToolCalls, ToolCallInfo{ID: tc.id, Name: tc.name, Args: tc.args})
@@ -373,12 +373,13 @@ func buildAssistantToolCallMessage(text string, calls []toolCallState) Message {
 	return Message{Role: "assistant", Content: parts}
 }
 
-func buildToolResultMessage(toolCallID, output string) Message {
+func buildToolResultMessage(toolCallID, toolName, output string) Message {
 	return Message{
 		Role: "tool",
 		Content: []ContentPart{{
 			Type:             "tool_result",
 			ToolResultID:     toolCallID,
+			ToolResultName:   toolName,
 			ToolResultOutput: output,
 		}},
 	}
