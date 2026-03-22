@@ -27,11 +27,11 @@ type StreamResult struct {
 	done chan struct{}
 
 	// Track which channels were requested before fan-out starts.
-	mu            sync.Mutex
-	startOnce     sync.Once
-	drainOnce     sync.Once
-	consumeOnce   sync.Once
-	textRequested bool
+	mu               sync.Mutex
+	startOnce        sync.Once
+	drainOnce        sync.Once
+	consumeOnce      sync.Once
+	textRequested    bool
 	eventsRequested  bool
 	consumeRequested bool
 }
