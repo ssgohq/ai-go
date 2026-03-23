@@ -9,7 +9,10 @@ const toolCallIDCtxKey ctxKey = iota
 // ToolCallIDFromContext returns the tool call ID injected by the engine
 // when executing a tool. Returns empty string if not in a tool execution.
 func ToolCallIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(toolCallIDCtxKey).(string)
+	v, ok := ctx.Value(toolCallIDCtxKey).(string)
+	if !ok {
+		return ""
+	}
 	return v
 }
 
