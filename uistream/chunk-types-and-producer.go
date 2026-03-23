@@ -2,6 +2,7 @@ package uistream
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/open-ai-sdk/ai-go/internal/engine"
 )
@@ -112,6 +113,8 @@ func (cp *ChunkProducer) translateEvent(ev engine.StepEvent) ([]Chunk, string) {
 		return cp.chunksToolCallDelta(ev), ""
 	case engine.StepEventToolResult:
 		return cp.chunksToolResult(ev), ""
+	case engine.StepEventToolCallInvalid:
+		return cp.chunksToolCallInvalid(ev), ""
 	case engine.StepEventSource:
 		return cp.chunksSource(ev), ""
 	case engine.StepEventStepEnd:
@@ -238,6 +241,14 @@ func (cp *ChunkProducer) chunksToolResult(ev engine.StepEvent) []Chunk {
 		{Type: ChunkToolInputAvailable, Fields: inputFields},
 		{Type: ChunkToolOutputAvailable, Fields: outputFields},
 	}
+}
+
+func (cp *ChunkProducer) chunksToolCallInvalid(ev engine.StepEvent) []Chunk {
+	return []Chunk{{Type: ChunkToolInputError, Fields: map[string]any{
+		"toolCallId": ev.ToolCallID,
+		"toolName":   ev.ToolCallName,
+		"errorText":  fmt.Sprintf("invalid JSON arguments for tool %q", ev.ToolCallName),
+	}}}
 }
 
 func (cp *ChunkProducer) chunksSource(ev engine.StepEvent) []Chunk {

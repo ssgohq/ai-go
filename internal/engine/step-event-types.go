@@ -17,6 +17,7 @@ const (
 	StepEventUsage
 	StepEventStepStart
 	StepEventStepEnd
+	StepEventToolCallInvalid // tool call had invalid JSON args, skipped execution
 	StepEventStructuredOutput
 	StepEventDone
 	StepEventError

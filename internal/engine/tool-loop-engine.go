@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 )
 
@@ -296,9 +297,9 @@ func emitFinalGeneration(
 	return true
 }
 
-// executeToolCalls processes a batch of completed tool calls: fires events,
-// runs executors, appends tool-result messages to history, and returns the
-// accumulated names, call infos, and results for step-finish accounting.
+// executeToolCalls processes a batch of completed tool calls: validates JSON args,
+// emits StepEventToolCallInvalid for invalid args (with error result for model retry),
+// then fires events and runs executors for valid calls.
 func executeToolCalls(
 	ctx context.Context,
 	out chan<- StepEvent,
@@ -308,6 +309,22 @@ func executeToolCalls(
 ) (toolNames []string, stepToolCalls []ToolCallInfo, stepToolResults []ToolResult) {
 	toolNames = make([]string, 0, len(toolCalls))
 	for _, tc := range toolCalls {
+		// Validate JSON args before executing. Invalid args are emitted as
+		// StepEventToolCallInvalid and an error result is appended to history
+		// so the model can retry in the next step.
+		if tc.args != "" && !json.Valid([]byte(tc.args)) {
+			out <- StepEvent{
+				Type:              StepEventToolCallInvalid,
+				ToolCallID:        tc.id,
+				ToolCallName:      tc.name,
+				ToolCallArgsDelta: tc.args,
+			}
+			errOutput := fmt.Sprintf(`{"error":"invalid JSON arguments for tool %q"}`, tc.name)
+			*history = append(*history, buildToolResultMessage(tc.id, tc.name, errOutput))
+			toolNames = append(toolNames, tc.name)
+			continue
+		}
+
 		out <- StepEvent{Type: StepEventToolCallReady, ToolCallID: tc.id, ToolCallName: tc.name}
 
 		result := executeToolCall(ctx, tools, tc)
