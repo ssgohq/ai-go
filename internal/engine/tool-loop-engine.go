@@ -338,7 +338,9 @@ func executeToolCall(ctx context.Context, tools *ToolSet, tc toolCallState) *Too
 		result.Output = fmt.Sprintf(`{"error":"no executor for tool %q"}`, tc.name)
 		return result
 	}
-	output, err := tools.Executor.Execute(ctx, tc.name, tc.args)
+	// Inject tool call ID into context so downstream code (e.g. approval managers) can correlate.
+	execCtx := context.WithValue(ctx, toolCallIDCtxKey, tc.id)
+	output, err := tools.Executor.Execute(execCtx, tc.name, tc.args)
 	if err != nil {
 		result.Output = fmt.Sprintf(`{"error":%q}`, err.Error())
 	} else {

@@ -2,6 +2,17 @@ package engine
 
 import "context"
 
+type ctxKey int
+
+const toolCallIDCtxKey ctxKey = iota
+
+// ToolCallIDFromContext returns the tool call ID injected by the engine
+// when executing a tool. Returns empty string if not in a tool execution.
+func ToolCallIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(toolCallIDCtxKey).(string)
+	return v
+}
+
 // Model is the engine-internal interface a language model provider must satisfy.
 // It mirrors ai.LanguageModel but uses engine-local types to avoid import cycles.
 type Model interface {

@@ -3,7 +3,15 @@ package ai
 import (
 	"context"
 	"fmt"
+
+	"github.com/open-ai-sdk/ai-go/internal/engine"
 )
+
+// ToolCallIDFromContext returns the tool call ID injected by the engine
+// when executing a tool. Returns empty string if not in a tool execution context.
+func ToolCallIDFromContext(ctx context.Context) string {
+	return engine.ToolCallIDFromContext(ctx)
+}
 
 // Tool is a self-contained tool definition with its own typed executor.
 // Use NewToolSet to combine multiple Tool values into a ToolSet.
