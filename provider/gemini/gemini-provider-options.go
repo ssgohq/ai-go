@@ -11,6 +11,12 @@ type ProviderOptions struct {
 
 	// ThinkingConfig controls the model's thinking/reasoning behavior.
 	ThinkingConfig *ThinkingConfig
+
+	// ResponseModalities specifies the desired output modalities, e.g. ["IMAGE"], ["TEXT", "IMAGE"].
+	ResponseModalities []string
+
+	// ImageConfig holds optional configuration for image generation.
+	ImageConfig *ImageConfig
 }
 
 // ThinkingConfig controls how the model uses its thinking/reasoning capability.
@@ -22,6 +28,14 @@ type ThinkingConfig struct {
 	IncludeThoughts *bool
 	// ThinkingLevel sets a preset thinking level: "minimal", "low", "medium", "high".
 	ThinkingLevel string
+}
+
+// ImageConfig holds configuration for Gemini image generation.
+type ImageConfig struct {
+	// AspectRatio specifies the aspect ratio, e.g. "1:1", "16:9", "3:4".
+	AspectRatio string
+	// ImageSize specifies the output image size, e.g. "1K", "2K".
+	ImageSize string
 }
 
 // GoogleSearchConfig contains optional configuration for Google Search grounding.

@@ -64,21 +64,28 @@ type nativeTextPart struct {
 }
 
 type nativeGenerationConfig struct {
-	MaxOutputTokens  *int               `json:"maxOutputTokens,omitempty"`
-	Temperature      *float32           `json:"temperature,omitempty"`
-	TopK             *int               `json:"topK,omitempty"`
-	TopP             *float32           `json:"topP,omitempty"`
-	StopSequences    []string           `json:"stopSequences,omitempty"`
-	Seed             *int               `json:"seed,omitempty"`
-	ResponseMimeType string             `json:"responseMimeType,omitempty"`
-	ResponseSchema   map[string]any     `json:"responseSchema,omitempty"`
-	ThinkingConfig   *nativeThinkingCfg `json:"thinkingConfig,omitempty"`
+	MaxOutputTokens    *int                `json:"maxOutputTokens,omitempty"`
+	Temperature        *float32            `json:"temperature,omitempty"`
+	TopK               *int                `json:"topK,omitempty"`
+	TopP               *float32            `json:"topP,omitempty"`
+	StopSequences      []string            `json:"stopSequences,omitempty"`
+	Seed               *int                `json:"seed,omitempty"`
+	ResponseMimeType   string              `json:"responseMimeType,omitempty"`
+	ResponseSchema     map[string]any      `json:"responseSchema,omitempty"`
+	ThinkingConfig     *nativeThinkingCfg  `json:"thinkingConfig,omitempty"`
+	ResponseModalities []string            `json:"responseModalities,omitempty"`
+	ImageConfig        *nativeImageConfig  `json:"imageConfig,omitempty"`
 }
 
 type nativeThinkingCfg struct {
 	ThinkingBudget  *int   `json:"thinkingBudget,omitempty"`
 	IncludeThoughts *bool  `json:"includeThoughts,omitempty"`
 	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
+}
+
+type nativeImageConfig struct {
+	AspectRatio string `json:"aspectRatio,omitempty"`
+	ImageSize   string `json:"imageSize,omitempty"`
 }
 
 // encodeNativeRequest converts an ai.LanguageModelRequest to the native Gemini
@@ -329,6 +336,28 @@ func buildGenerationConfig(req ai.LanguageModelRequest) *nativeGenerationConfig 
 		}
 		if !tcEmpty {
 			cfg.ThinkingConfig = ntc
+			empty = false
+		}
+	}
+
+	// ResponseModalities and ImageConfig from provider options.
+	if len(opts.ResponseModalities) > 0 {
+		cfg.ResponseModalities = opts.ResponseModalities
+		empty = false
+	}
+	if opts.ImageConfig != nil {
+		ic := &nativeImageConfig{}
+		icEmpty := true
+		if opts.ImageConfig.AspectRatio != "" {
+			ic.AspectRatio = opts.ImageConfig.AspectRatio
+			icEmpty = false
+		}
+		if opts.ImageConfig.ImageSize != "" {
+			ic.ImageSize = opts.ImageConfig.ImageSize
+			icEmpty = false
+		}
+		if !icEmpty {
+			cfg.ImageConfig = ic
 			empty = false
 		}
 	}

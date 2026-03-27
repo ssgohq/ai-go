@@ -48,6 +48,9 @@ func GenerateText(ctx context.Context, req GenerateTextRequest) (*GenerateTextRe
 		case engine.StepEventSource:
 			handleSource(ev, result, currentStep)
 
+		case engine.StepEventFileDelta:
+			handleFileDelta(ev, result, currentStep)
+
 		case engine.StepEventStepEnd:
 			currentStep = handleStepEnd(ev, result, currentStep)
 
@@ -111,6 +114,20 @@ func handleSource(ev engine.StepEvent, result *GenerateTextResult, step *StepOut
 	result.Sources = append(result.Sources, src)
 	if step != nil {
 		step.Sources = append(step.Sources, src)
+	}
+}
+
+func handleFileDelta(ev engine.StepEvent, result *GenerateTextResult, step *StepOutput) {
+	if len(ev.FileData) == 0 {
+		return
+	}
+	f := GeneratedFile{
+		Data:     ev.FileData,
+		MimeType: ev.FileMimeType,
+	}
+	result.Files = append(result.Files, f)
+	if step != nil {
+		step.Files = append(step.Files, f)
 	}
 }
 
@@ -380,6 +397,8 @@ func toChunkEvent(ev engine.StepEvent) ChunkEvent {
 		typ = "error"
 	case engine.StepEventSource:
 		typ = "source"
+	case engine.StepEventFileDelta:
+		typ = "file-delta"
 	default:
 		typ = "unknown"
 	}
@@ -457,6 +476,8 @@ func toEngineStreamEvent(ev StreamEvent) engine.StreamEvent {
 		FinishReason:      engine.FinishReason(ev.FinishReason),
 		RawFinishReason:   ev.RawFinishReason,
 		ProviderMetadata:  ev.ProviderMetadata,
+		FileData:          ev.FileData,
+		FileMimeType:      ev.FileMimeType,
 		Error:             ev.Error,
 	}
 	if ev.Usage != nil {
