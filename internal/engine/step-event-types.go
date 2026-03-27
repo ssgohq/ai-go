@@ -23,6 +23,8 @@ const (
 	StepEventError
 	// StepEventSource carries a source reference from a provider-native tool.
 	StepEventSource
+	// StepEventFileDelta carries a file/image output part from the model.
+	StepEventFileDelta
 )
 
 // StepEvent is a single event emitted by the engine's Run goroutine.
@@ -58,6 +60,10 @@ type StepEvent struct {
 
 	// Source is set for StepEventSource events.
 	Source *Source
+
+	// File fields are set for StepEventFileDelta.
+	FileData     []byte
+	FileMimeType string
 
 	// Structured output (final step only).
 	StructuredOutput json.RawMessage
@@ -107,6 +113,8 @@ const (
 	StreamEventError
 	// StreamEventSource carries a source reference (web search result, document, etc.)
 	StreamEventSource
+	// StreamEventFileDelta carries a file/image output part from the model.
+	StreamEventFileDelta
 )
 
 // Source represents a single source reference from a provider-native tool.
@@ -145,5 +153,8 @@ type StreamEvent struct {
 	Warnings []Warning
 	// Source is set for StreamEventSource events.
 	Source *Source
-	Error  error
+	// File fields are set for StreamEventFileDelta.
+	FileData     []byte
+	FileMimeType string
+	Error        error
 }

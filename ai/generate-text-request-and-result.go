@@ -52,6 +52,8 @@ type StepOutput struct {
 	ProviderMetadata map[string]any
 	Warnings         []Warning
 	Sources          []Source
+	// Files holds file/image outputs from the model.
+	Files []GeneratedFile
 }
 
 // ToolCallOutput holds the details of a single tool call made by the model.
@@ -73,6 +75,8 @@ type GenerateTextResult struct {
 	ProviderMetadata map[string]any
 	Warnings         []Warning
 	Sources          []Source
+	// Files holds file/image outputs from the model (aggregated across all steps).
+	Files            []GeneratedFile
 	StructuredOutput json.RawMessage
 }
 
@@ -134,4 +138,12 @@ type ChunkEvent struct {
 	ToolCallArgsDelta string
 	StepNumber        int
 	FinishReason      FinishReason
+}
+
+// GeneratedFile holds a file (typically an image) output from the model.
+type GeneratedFile struct {
+	// Data is the raw file bytes.
+	Data []byte
+	// MimeType is the MIME type of the file (e.g. "image/png").
+	MimeType string
 }

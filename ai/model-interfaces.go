@@ -63,6 +63,8 @@ const (
 	StreamEventError
 	// StreamEventSource carries a source (web search result, document reference, etc.)
 	StreamEventSource
+	// StreamEventFileDelta carries a file/image output part from the model.
+	StreamEventFileDelta
 )
 
 // Source represents a single source reference from a provider-native tool such as web search.
@@ -107,6 +109,10 @@ type StreamEvent struct {
 
 	// Source is set for StreamEventSource.
 	Source *Source
+
+	// File fields are set for StreamEventFileDelta.
+	FileData     []byte
+	FileMimeType string
 
 	// Error is set for StreamEventError.
 	Error error

@@ -64,21 +64,28 @@ type nativeTextPart struct {
 }
 
 type nativeGenerationConfig struct {
-	MaxOutputTokens  *int               `json:"maxOutputTokens,omitempty"`
-	Temperature      *float32           `json:"temperature,omitempty"`
-	TopK             *int               `json:"topK,omitempty"`
-	TopP             *float32           `json:"topP,omitempty"`
-	StopSequences    []string           `json:"stopSequences,omitempty"`
-	Seed             *int               `json:"seed,omitempty"`
-	ResponseMimeType string             `json:"responseMimeType,omitempty"`
-	ResponseSchema   map[string]any     `json:"responseSchema,omitempty"`
-	ThinkingConfig   *nativeThinkingCfg `json:"thinkingConfig,omitempty"`
+	MaxOutputTokens    *int               `json:"maxOutputTokens,omitempty"`
+	Temperature        *float32           `json:"temperature,omitempty"`
+	TopK               *int               `json:"topK,omitempty"`
+	TopP               *float32           `json:"topP,omitempty"`
+	StopSequences      []string           `json:"stopSequences,omitempty"`
+	Seed               *int               `json:"seed,omitempty"`
+	ResponseMimeType   string             `json:"responseMimeType,omitempty"`
+	ResponseSchema     map[string]any     `json:"responseSchema,omitempty"`
+	ThinkingConfig     *nativeThinkingCfg `json:"thinkingConfig,omitempty"`
+	ResponseModalities []string           `json:"responseModalities,omitempty"`
+	ImageConfig        *nativeImageConfig `json:"imageConfig,omitempty"`
 }
 
 type nativeThinkingCfg struct {
 	ThinkingBudget  *int   `json:"thinkingBudget,omitempty"`
 	IncludeThoughts *bool  `json:"includeThoughts,omitempty"`
 	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
+}
+
+type nativeImageConfig struct {
+	AspectRatio string `json:"aspectRatio,omitempty"`
+	ImageSize   string `json:"imageSize,omitempty"`
 }
 
 // encodeNativeRequest converts an ai.LanguageModelRequest to the native Gemini
@@ -281,75 +288,135 @@ func encodeFilePart(p ai.ContentPart) nativePart {
 // buildGenerationConfig constructs the generationConfig from settings, provider options, and output schema.
 func buildGenerationConfig(req ai.LanguageModelRequest) *nativeGenerationConfig {
 	cfg := &nativeGenerationConfig{}
-	empty := true
-
-	s := req.Settings
-	if s.MaxTokens > 0 {
-		cfg.MaxOutputTokens = &s.MaxTokens
-		empty = false
-	}
-	if s.Temperature != nil {
-		cfg.Temperature = s.Temperature
-		empty = false
-	}
-	if s.TopP != nil {
-		cfg.TopP = s.TopP
-		empty = false
-	}
-	if s.TopK != nil {
-		cfg.TopK = s.TopK
-		empty = false
-	}
-	if s.Seed != nil {
-		cfg.Seed = s.Seed
-		empty = false
-	}
-	if len(s.StopSequences) > 0 {
-		cfg.StopSequences = s.StopSequences
-		empty = false
-	}
-
-	// ThinkingConfig from provider options.
 	opts := parseProviderOptions(req.ProviderOptions)
-	if opts.ThinkingConfig != nil {
-		tc := opts.ThinkingConfig
-		ntc := &nativeThinkingCfg{}
-		tcEmpty := true
-		if tc.ThinkingBudget != nil {
-			ntc.ThinkingBudget = tc.ThinkingBudget
-			tcEmpty = false
-		}
-		if tc.IncludeThoughts != nil {
-			ntc.IncludeThoughts = tc.IncludeThoughts
-			tcEmpty = false
-		}
-		if tc.ThinkingLevel != "" {
-			ntc.ThinkingLevel = tc.ThinkingLevel
-			tcEmpty = false
-		}
-		if !tcEmpty {
-			cfg.ThinkingConfig = ntc
-			empty = false
-		}
-	}
 
-	// Output schema.
-	if req.Output != nil {
-		switch req.Output.Type {
-		case "json_object", "object", "array":
-			cfg.ResponseMimeType = "application/json"
-			empty = false
-		}
-		if (req.Output.Type == "object" || req.Output.Type == "array") && req.Output.Schema != nil {
-			cfg.ResponseSchema = sanitizeMap(req.Output.Schema)
-			empty = false
-		}
-	}
+	s := applyCallSettings(cfg, req.Settings)
+	p := applyProviderOptions(cfg, opts)
+	o := applyOutputSchema(cfg, req.Output)
 
-	if empty {
+	if !s && !p && !o {
 		return nil
 	}
 	return cfg
+}
+
+// applyCallSettings maps CallSettings fields onto the generation config.
+// Returns true if any field was set.
+func applyCallSettings(cfg *nativeGenerationConfig, s ai.CallSettings) bool {
+	set := false
+	if s.MaxTokens > 0 {
+		cfg.MaxOutputTokens = &s.MaxTokens
+		set = true
+	}
+	if s.Temperature != nil {
+		cfg.Temperature = s.Temperature
+		set = true
+	}
+	if s.TopP != nil {
+		cfg.TopP = s.TopP
+		set = true
+	}
+	if s.TopK != nil {
+		cfg.TopK = s.TopK
+		set = true
+	}
+	if s.Seed != nil {
+		cfg.Seed = s.Seed
+		set = true
+	}
+	if len(s.StopSequences) > 0 {
+		cfg.StopSequences = s.StopSequences
+		set = true
+	}
+	return set
+}
+
+// applyProviderOptions maps Gemini-specific provider options onto the generation config.
+// Returns true if any field was set.
+func applyProviderOptions(cfg *nativeGenerationConfig, opts ProviderOptions) bool {
+	set := false
+
+	if opts.ThinkingConfig != nil {
+		if ntc := buildNativeThinkingConfig(opts.ThinkingConfig); ntc != nil {
+			cfg.ThinkingConfig = ntc
+			set = true
+		}
+	}
+
+	if len(opts.ResponseModalities) > 0 {
+		cfg.ResponseModalities = opts.ResponseModalities
+		set = true
+	}
+
+	if opts.ImageConfig != nil {
+		if ic := buildNativeImageConfig(opts.ImageConfig); ic != nil {
+			cfg.ImageConfig = ic
+			set = true
+		}
+	}
+
+	return set
+}
+
+// buildNativeThinkingConfig converts a ThinkingConfig to its native representation.
+// Returns nil if no fields are set.
+func buildNativeThinkingConfig(tc *ThinkingConfig) *nativeThinkingCfg {
+	ntc := &nativeThinkingCfg{}
+	empty := true
+	if tc.ThinkingBudget != nil {
+		ntc.ThinkingBudget = tc.ThinkingBudget
+		empty = false
+	}
+	if tc.IncludeThoughts != nil {
+		ntc.IncludeThoughts = tc.IncludeThoughts
+		empty = false
+	}
+	if tc.ThinkingLevel != "" {
+		ntc.ThinkingLevel = tc.ThinkingLevel
+		empty = false
+	}
+	if empty {
+		return nil
+	}
+	return ntc
+}
+
+// buildNativeImageConfig converts an ImageConfig to its native representation.
+// Returns nil if no fields are set.
+func buildNativeImageConfig(ic *ImageConfig) *nativeImageConfig {
+	nic := &nativeImageConfig{}
+	empty := true
+	if ic.AspectRatio != "" {
+		nic.AspectRatio = ic.AspectRatio
+		empty = false
+	}
+	if ic.ImageSize != "" {
+		nic.ImageSize = ic.ImageSize
+		empty = false
+	}
+	if empty {
+		return nil
+	}
+	return nic
+}
+
+// applyOutputSchema maps output schema settings onto the generation config.
+// Returns true if any field was set.
+func applyOutputSchema(cfg *nativeGenerationConfig, output *ai.OutputSchema) bool {
+	if output == nil {
+		return false
+	}
+	set := false
+	switch output.Type {
+	case "json_object", "object", "array":
+		cfg.ResponseMimeType = "application/json"
+		set = true
+	}
+	if (output.Type == "object" || output.Type == "array") && output.Schema != nil {
+		cfg.ResponseSchema = sanitizeMap(output.Schema)
+		set = true
+	}
+	return set
 }
 
 // parseDataURI parses a data: URI and returns the MIME type and base64-encoded data.

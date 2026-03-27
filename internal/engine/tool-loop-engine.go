@@ -204,6 +204,13 @@ func applyStreamEvent(
 			emitChunk(StepEvent{Type: StepEventSource, Source: ev.Source})
 		}
 
+	case StreamEventFileDelta:
+		emitChunk(StepEvent{
+			Type:         StepEventFileDelta,
+			FileData:     ev.FileData,
+			FileMimeType: ev.FileMimeType,
+		})
+
 	case StreamEventFinish:
 		sr.finish = ev.FinishReason
 		sr.rawFinish = ev.RawFinishReason
