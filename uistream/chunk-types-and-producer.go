@@ -145,6 +145,15 @@ func (cp *ChunkProducer) chunksStepStart() []Chunk {
 
 func (cp *ChunkProducer) chunksTextDelta(ev engine.StepEvent) ([]Chunk, string) {
 	var out []Chunk
+	// End active reasoning block before text starts (matches Vercel AI SDK behavior).
+	if cp.reasoningStarted {
+		reasoningEndFields := map[string]any{"id": cp.textBlockID}
+		if cp.lastThoughtSignature != "" {
+			reasoningEndFields["signature"] = cp.lastThoughtSignature
+		}
+		out = append(out, Chunk{Type: ChunkReasoningEnd, Fields: reasoningEndFields})
+		cp.reasoningStarted = false
+	}
 	if !cp.textStarted {
 		out = append(out, Chunk{Type: ChunkTextStart, Fields: map[string]any{"id": cp.textBlockID}})
 		cp.textStarted = true
