@@ -17,6 +17,8 @@ type StreamChunk struct {
 	Choices []struct {
 		Delta struct {
 			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content,omitempty"`
+			Reasoning        string `json:"reasoning,omitempty"`
 			Thought          *bool  `json:"thought,omitempty"`
 			ThoughtSignature string `json:"thought_signature,omitempty"`
 			ToolCalls        []struct {
@@ -173,7 +175,19 @@ func emitChunkEvents(
 		}
 	}
 
-	// Text or reasoning delta.
+	// Reasoning delta from reasoning_content / reasoning fields (OpenAI, DeepSeek, xAI, etc.).
+	reasoningText := choice.Delta.ReasoningContent
+	if reasoningText == "" {
+		reasoningText = choice.Delta.Reasoning
+	}
+	if reasoningText != "" {
+		ch <- ai.StreamEvent{
+			Type:      ai.StreamEventReasoningDelta,
+			TextDelta: reasoningText,
+		}
+	}
+
+	// Text or reasoning delta (Gemini thought flag pattern).
 	if choice.Delta.Content != "" || choice.Delta.ThoughtSignature != "" {
 		if choice.Delta.Thought != nil && *choice.Delta.Thought {
 			ch <- ai.StreamEvent{
