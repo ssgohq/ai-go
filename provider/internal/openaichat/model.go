@@ -147,7 +147,7 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 		)
 	}
 
-	respBody := io.ReadCloser(resp.Body)
+	respBody := resp.Body
 	if m.cfg.ChunkTimeout > 0 {
 		respBody = NewTimeoutReader(resp.Body, m.cfg.ChunkTimeout)
 	}

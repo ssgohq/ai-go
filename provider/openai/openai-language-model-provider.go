@@ -68,7 +68,7 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 		return nil, err
 	}
 
-	body := io.ReadCloser(resp.Body)
+	body := resp.Body
 	if m.chunkTimeout > 0 {
 		body = openaichat.NewTimeoutReader(resp.Body, m.chunkTimeout)
 	}
