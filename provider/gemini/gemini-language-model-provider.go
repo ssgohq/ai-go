@@ -22,6 +22,7 @@ type Config struct {
 	BaseURL              string        // optional; defaults to Gemini production endpoint
 	Timeout              time.Duration // optional; defaults to 120s for LLM, 60s for embedding
 	OutputDimensionality int           // optional; embedding output dimensions (768, 1536, 3072)
+	ChunkTimeout         time.Duration // optional; per-chunk SSE read timeout (0 = disabled)
 }
 
 // NewLanguageModel creates a Gemini-backed ai.LanguageModel.
@@ -46,6 +47,7 @@ func NewLanguageModel(modelID string, cfg Config) *LanguageModel {
 		},
 		ExtraBodyFieldsForRequest: extraBodyFieldsForRequest,
 		TransformRequestBody:      mergeGoogleSearchTools,
+		ChunkTimeout:              cfg.ChunkTimeout,
 	})
 	return &LanguageModel{modelID: modelID, core: core}
 }

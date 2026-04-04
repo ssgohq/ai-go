@@ -44,6 +44,10 @@ type ModelConfig struct {
 	ExtraBodyFieldsForRequest func(req ai.LanguageModelRequest) map[string]any
 	// MetadataExtractor is an optional hook to extract provider metadata from SSE chunks.
 	MetadataExtractor func(chunk StreamChunk) map[string]any
+	// ChunkTimeout is the per-chunk SSE read timeout. Each received chunk resets
+	// the timer. If no data arrives within this duration, the stream is aborted
+	// with ErrChunkTimeout. Zero means no per-chunk timeout.
+	ChunkTimeout time.Duration
 }
 
 // LanguageModel implements ai.LanguageModel using OpenAI-style chat completions.
@@ -143,8 +147,13 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 		)
 	}
 
+	respBody := io.ReadCloser(resp.Body)
+	if m.cfg.ChunkTimeout > 0 {
+		respBody = NewTimeoutReader(resp.Body, m.cfg.ChunkTimeout)
+	}
+
 	ch := make(chan ai.StreamEvent, 64)
-	go DecodeSSEStream(ctx, resp.Body, ch, SSEDecodeParams{
+	go DecodeSSEStream(ctx, respBody, ch, SSEDecodeParams{
 		ProviderName:      m.cfg.ProviderName,
 		MetadataExtractor: m.cfg.MetadataExtractor,
 	})

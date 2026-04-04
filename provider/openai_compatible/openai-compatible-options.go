@@ -28,4 +28,6 @@ type Config struct {
 	// TransformRequest is an optional escape-hatch hook to mutate the raw chat request
 	// before it is sent. Use sparingly — prefer capability flags for known behaviors.
 	TransformRequest func(req map[string]any) map[string]any
+	// ChunkTimeout is the per-chunk SSE read timeout. Zero means disabled.
+	ChunkTimeout time.Duration
 }
