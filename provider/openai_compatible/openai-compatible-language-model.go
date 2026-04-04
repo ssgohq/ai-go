@@ -35,6 +35,7 @@ func NewLanguageModel(modelID string, cfg Config) *LanguageModel {
 			SupportsStreamUsage:      cfg.SupportsStreamUsage,
 		},
 		TransformRequestBody: cfg.TransformRequest,
+		ChunkTimeout:         cfg.ChunkTimeout,
 	})
 
 	return &LanguageModel{core: core}

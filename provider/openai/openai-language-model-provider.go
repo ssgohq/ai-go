@@ -10,23 +10,26 @@ import (
 	"time"
 
 	"github.com/open-ai-sdk/ai-go/ai"
+	"github.com/open-ai-sdk/ai-go/provider/internal/openaichat"
 )
 
 const defaultBaseURL = "https://api.openai.com/v1"
 
 // LanguageModel implements ai.LanguageModel for the OpenAI Responses API.
 type LanguageModel struct {
-	modelID string
-	apiKey  string
-	baseURL string
-	client  *http.Client
+	modelID      string
+	apiKey       string
+	baseURL      string
+	chunkTimeout time.Duration
+	client       *http.Client
 }
 
 // Config holds options for constructing an OpenAI LanguageModel.
 type Config struct {
-	APIKey  string
-	BaseURL string        // optional; defaults to https://api.openai.com/v1
-	Timeout time.Duration // optional; defaults to 120s
+	APIKey       string
+	BaseURL      string        // optional; defaults to https://api.openai.com/v1
+	Timeout      time.Duration // optional; defaults to 120s
+	ChunkTimeout time.Duration // optional; per-chunk SSE read timeout (0 = disabled)
 }
 
 // NewLanguageModel creates an OpenAI-backed ai.LanguageModel using the Responses API.
@@ -40,10 +43,11 @@ func NewLanguageModel(modelID string, cfg Config) *LanguageModel {
 		timeout = 120 * time.Second
 	}
 	return &LanguageModel{
-		modelID: modelID,
-		apiKey:  cfg.APIKey,
-		baseURL: base,
-		client:  &http.Client{Timeout: timeout},
+		modelID:      modelID,
+		apiKey:       cfg.APIKey,
+		baseURL:      base,
+		chunkTimeout: cfg.ChunkTimeout,
+		client:       &http.Client{Timeout: timeout},
 	}
 }
 
@@ -64,11 +68,16 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 		return nil, err
 	}
 
+	body := resp.Body
+	if m.chunkTimeout > 0 {
+		body = openaichat.NewTimeoutReader(resp.Body, m.chunkTimeout)
+	}
+
 	ch := make(chan ai.StreamEvent, 64)
 	go func() {
 		// Encoding warnings are merged onto the response.completed finish event
 		// inside the decoder so callers see them in GenerateTextResult.Warnings.
-		decodeResponsesSSEStream(ctx, resp.Body, ch, warnings...)
+		decodeResponsesSSEStream(ctx, body, ch, warnings...)
 	}()
 	return ch, nil
 }

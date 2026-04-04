@@ -43,6 +43,7 @@ func NewChatLanguageModel(modelID string, cfg Config) *ChatLanguageModel {
 			SupportsStructuredOutput: true,
 			SupportsStreamUsage:      true,
 		},
+		ChunkTimeout: cfg.ChunkTimeout,
 	})
 	return &ChatLanguageModel{inner: inner}
 }
