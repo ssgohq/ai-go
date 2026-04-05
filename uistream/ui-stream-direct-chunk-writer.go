@@ -262,3 +262,13 @@ func (wr *Writer) WriteToolApprovalRequest(approvalID, toolCallID, toolName stri
 func (wr *Writer) WriteChunkWithProviderMetadata(typ string, fields, providerMeta map[string]any) {
 	WriteSSE(wr.w, Chunk{Type: typ, Fields: withProviderMetadata(fields, providerMeta)})
 }
+
+// WriteUISpec emits a data-ui-spec chunk carrying a single JSON Patch operation
+// (RFC 6902) or a full spec replacement object.
+//
+// For incremental streaming, call once per patch operation as they arrive.
+// For a post-stream full delivery, call once with the final spec object.
+// The Swift client's UIMessageStreamReducer applies each patch to the live spec.
+func (wr *Writer) WriteUISpec(patch map[string]any) {
+	wr.WriteData("ui-spec", patch)
+}

@@ -18,6 +18,7 @@ type mergeConfig struct {
 	sourceHook         SourceHook
 	onFinish           func(text string)
 	persistenceBuilder *PersistedMessageBuilder
+	textDeltaHook      func(delta string)
 }
 
 // MergeOption configures MergeStreamResult behavior.
@@ -41,6 +42,15 @@ func MergeWithSourceHook(hook SourceHook) MergeOption {
 func MergeWithOnFinish(fn func(text string)) MergeOption {
 	return func(c *mergeConfig) {
 		c.onFinish = fn
+	}
+}
+
+// MergeWithTextDeltaHook sets a callback invoked for each text-delta event.
+// The hook runs in the same goroutine as MergeStreamResult so it may safely
+// call Writer methods (e.g. WriteUISpec) without extra locking.
+func MergeWithTextDeltaHook(fn func(delta string)) MergeOption {
+	return func(c *mergeConfig) {
+		c.textDeltaHook = fn
 	}
 }
 
@@ -120,6 +130,11 @@ func (wr *Writer) MergeStreamResult(sr StreamEventer, opts ...MergeOption) strin
 			}
 			wr.WriteError(msg)
 		default:
+			if c.Type == ChunkTextDelta && cfg.textDeltaHook != nil {
+				if delta, ok := c.Fields["delta"].(string); ok {
+					cfg.textDeltaHook(delta)
+				}
+			}
 			wr.WriteChunk(c.Type, c.Fields)
 
 			if c.Type == ChunkSourceURL && cfg.sourceHook != nil {

@@ -18,6 +18,11 @@ type PersistedMessageBuilder struct {
 	// ordered list of finalized parts
 	parts    []any
 	metadata json.RawMessage
+
+	// uiSpec accumulates data-ui-spec patches into a single final spec.
+	// Each patch is either a full spec replacement or an RFC 6902 JSON Patch operation.
+	uiSpec    map[string]any
+	hasUISpec bool
 }
 
 type toolInvocationPart struct {
@@ -332,9 +337,78 @@ func (b *PersistedMessageBuilder) observeDataChunk(c Chunk) {
 		return
 	}
 	name := strings.TrimPrefix(c.Type, "data-")
+
+	// data-ui-spec chunks are accumulated into a single ui-spec part so that
+	// the client can decode them as UIRenderSpecPart (type="ui-spec") on history load.
+	if name == "ui-spec" {
+		if patch, ok := c.Fields["data"].(map[string]any); ok {
+			b.applyUISpecPatch(patch)
+		}
+		return
+	}
+
 	b.parts = append(b.parts, map[string]any{
 		"type": "data", "name": name, "data": c.Fields["data"], "isTransient": false,
 	})
+}
+
+// applyUISpecPatch applies a single patch to the accumulated ui-spec.
+// The patch is either an RFC 6902 JSON Patch operation (has "op" key)
+// or a full spec replacement (has "root"/"elements" keys).
+func (b *PersistedMessageBuilder) applyUISpecPatch(patch map[string]any) {
+	if b.uiSpec == nil {
+		b.uiSpec = map[string]any{}
+	}
+	b.hasUISpec = true
+	if _, hasOp := patch["op"].(string); hasOp {
+		uiSpecJSONPatch(b.uiSpec, patch)
+	} else {
+		// Full spec replacement.
+		b.uiSpec = patch
+	}
+}
+
+// uiSpecJSONPatch applies a single RFC 6902 operation to a map[string]any document.
+// Supports "add", "replace", and "remove" operations.
+func uiSpecJSONPatch(doc map[string]any, patch map[string]any) {
+	op, _ := patch["op"].(string)
+	path, _ := patch["path"].(string)
+	value := patch["value"]
+
+	// Trim leading "/" and split into path segments.
+	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	if len(segments) == 0 || (len(segments) == 1 && segments[0] == "") {
+		return
+	}
+	switch op {
+	case "add", "replace":
+		uiSpecSetPath(doc, segments, value)
+	case "remove":
+		uiSpecRemovePath(doc, segments)
+	}
+}
+
+func uiSpecSetPath(node map[string]any, segments []string, value any) {
+	if len(segments) == 1 {
+		node[segments[0]] = value
+		return
+	}
+	child, ok := node[segments[0]].(map[string]any)
+	if !ok {
+		child = map[string]any{}
+		node[segments[0]] = child
+	}
+	uiSpecSetPath(child, segments[1:], value)
+}
+
+func uiSpecRemovePath(node map[string]any, segments []string) {
+	if len(segments) == 1 {
+		delete(node, segments[0])
+		return
+	}
+	if child, ok := node[segments[0]].(map[string]any); ok {
+		uiSpecRemovePath(child, segments[1:])
+	}
 }
 
 // Content returns the denormalized text content (all text parts joined).
@@ -355,11 +429,20 @@ func (b *PersistedMessageBuilder) Content() string {
 }
 
 // Parts returns the serialized JSON array of typed parts.
+// If any data-ui-spec chunks were observed, a single "ui-spec" part with the
+// accumulated final spec is appended so that clients can decode it as UIRenderSpecPart.
 func (b *PersistedMessageBuilder) Parts() json.RawMessage {
-	if len(b.parts) == 0 {
+	parts := b.parts
+	if b.hasUISpec {
+		parts = append(parts, map[string]any{
+			"type":     "ui-spec",
+			"rawValue": b.uiSpec,
+		})
+	}
+	if len(parts) == 0 {
 		return nil
 	}
-	raw, err := json.Marshal(b.parts)
+	raw, err := json.Marshal(parts)
 	if err != nil {
 		return nil
 	}

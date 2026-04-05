@@ -14,13 +14,13 @@ Go SDK for building AI-powered applications with a unified provider interface.
 
 ## Packages
 
-| Package | Description |
+| **Package** | **Description** |
 |---------|-------------|
-| `ai` | Public API: `GenerateText`, `StreamText`, request/result types, model interfaces |
+| `ai` | **Public API**: `GenerateText`, `StreamText`, request/result types, model interfaces |
 | `provider/gemini` | Google Gemini provider |
-| `provider/openai` | OpenAI Responses API + Chat Completions provider |
+| `provider/openai` | OpenAI **Responses API** + **Chat Completions** provider |
 | `provider/openai_compatible` | Generic provider for any OpenAI-compatible endpoint |
-| `uistream` | SSE adapter and Writer for AI SDK UI message stream protocol |
+| `uistream` | SSE adapter and Writer for **AI SDK UI message stream protocol** |
 | `schema` | JSON Schema builder for structured output |
 
 ## Quick Start
