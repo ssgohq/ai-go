@@ -49,7 +49,11 @@ func (e *MCPToolExecutor) Execute(ctx context.Context, canonicalName, argsJSON s
 	}
 
 	if result.IsError {
-		return "", fmt.Errorf("mcp.MCPToolExecutor: tool %q returned error: %s", canonicalName, contentToString(result.Content))
+		return "", fmt.Errorf(
+			"mcp.MCPToolExecutor: tool %q returned error: %s",
+			canonicalName,
+			contentToString(result.Content),
+		)
 	}
 
 	return contentToString(result.Content), nil
@@ -132,5 +136,3 @@ func contentToString(parts []ContentPart) string {
 	}
 	return b.String()
 }
-
-

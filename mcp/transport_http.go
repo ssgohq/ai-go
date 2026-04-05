@@ -51,10 +51,10 @@ type HTTPTransport struct {
 }
 
 type reconnectionConfig struct {
-	initialDelay  time.Duration
-	maxDelay      time.Duration
-	growFactor    float64
-	maxRetries    int
+	initialDelay time.Duration
+	maxDelay     time.Duration
+	growFactor   float64
+	maxRetries   int
 }
 
 var _ Transport = (*HTTPTransport)(nil)
