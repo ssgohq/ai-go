@@ -313,12 +313,21 @@ func (t *HTTPTransport) readSSEStream(body io.ReadCloser) {
 // openInboundSSE opens an optional server-initiated SSE stream via GET.
 // Failures are non-fatal (the server may not support it).
 func (t *HTTPTransport) openInboundSSE(ctx context.Context) {
+	reconnect := t.doOpenInboundSSE(ctx)
+	if reconnect && ctx.Err() == nil {
+		t.scheduleReconnect(ctx)
+	}
+}
+
+// doOpenInboundSSE performs the actual SSE GET and reads the stream.
+// It returns true if a reconnection attempt should be scheduled.
+func (t *HTTPTransport) doOpenInboundSSE(ctx context.Context) (reconnect bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.config.URL, nil)
 	if err != nil {
 		if t.onError != nil {
 			t.onError(fmt.Errorf("mcp: create sse request: %w", err))
 		}
-		return
+		return false
 	}
 	t.setCommonHeaders(req)
 	req.Header.Set("Accept", "text/event-stream")
@@ -330,16 +339,15 @@ func (t *HTTPTransport) openInboundSSE(ctx context.Context) {
 		req.Header.Set("Last-Event-ID", lastID)
 	}
 
-	resp, err := t.client.Do(req)
+	resp, err := t.client.Do(req) //nolint:bodyclose // closed by deferred resp.Body.Close below
 	if err != nil {
 		if ctx.Err() != nil {
-			return // context cancelled
+			return false // context cancelled
 		}
 		if t.onError != nil {
 			t.onError(fmt.Errorf("mcp: sse get: %w", err))
 		}
-		t.scheduleReconnect(ctx)
-		return
+		return true
 	}
 	defer resp.Body.Close()
 
@@ -352,14 +360,14 @@ func (t *HTTPTransport) openInboundSSE(ctx context.Context) {
 
 	// 405 means server doesn't support inbound SSE — that's fine.
 	if resp.StatusCode == http.StatusMethodNotAllowed {
-		return
+		return false
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || resp.Body == nil {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if t.onError != nil {
 			t.onError(fmt.Errorf("mcp: sse get status %d", resp.StatusCode))
 		}
-		return
+		return false
 	}
 
 	t.mu.Lock()
@@ -369,10 +377,8 @@ func (t *HTTPTransport) openInboundSSE(ctx context.Context) {
 
 	t.readSSEStream(resp.Body)
 
-	// Stream ended — attempt reconnection if not cancelled.
-	if ctx.Err() == nil {
-		t.scheduleReconnect(ctx)
-	}
+	// Stream ended — attempt reconnection.
+	return true
 }
 
 // scheduleReconnect retries the inbound SSE connection with exponential backoff.
