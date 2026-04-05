@@ -128,7 +128,11 @@ func (t *StdioTransport) readLoop(ctx context.Context, r io.Reader, cmd *exec.Cm
 		}
 	}
 	// Wait for the process to exit.
-	_ = cmd.Wait()
+	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+		if t.onError != nil {
+			t.onError(fmt.Errorf("mcp: process exited: %w", err))
+		}
+	}
 	if t.onClose != nil {
 		t.onClose()
 	}

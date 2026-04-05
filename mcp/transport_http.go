@@ -149,7 +149,10 @@ func (t *HTTPTransport) Send(msg JSONRPCMessage) error {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if err != nil {
+			return fmt.Errorf("mcp: http post status %d (body unreadable: %w)", resp.StatusCode, err)
+		}
 		return fmt.Errorf("mcp: http post status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -338,6 +341,7 @@ func (t *HTTPTransport) openInboundSSE(ctx context.Context) {
 		t.scheduleReconnect(ctx)
 		return
 	}
+	defer resp.Body.Close()
 
 	// Capture session ID.
 	if sid := resp.Header.Get("mcp-session-id"); sid != "" {
@@ -348,14 +352,10 @@ func (t *HTTPTransport) openInboundSSE(ctx context.Context) {
 
 	// 405 means server doesn't support inbound SSE — that's fine.
 	if resp.StatusCode == http.StatusMethodNotAllowed {
-		resp.Body.Close()
 		return
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || resp.Body == nil {
-		if resp.Body != nil {
-			resp.Body.Close()
-		}
 		if t.onError != nil {
 			t.onError(fmt.Errorf("mcp: sse get status %d", resp.StatusCode))
 		}
