@@ -13,7 +13,7 @@ import (
 // ChunkDetector extracts the next chunk from a buffer.
 // Returns (chunk, remaining, nil) when a chunk is detected.
 // Returns ("", "", nil) when no chunk is detected yet (buffer needs more data).
-type ChunkDetector func(buffer string) (chunk string, remaining string, err error)
+type ChunkDetector func(buffer string) (chunk, remaining string, err error)
 
 // SmoothStream buffers and re-chunks text-delta and reasoning-delta events
 // for a smoother streaming UX. Non-text events pass through immediately.
