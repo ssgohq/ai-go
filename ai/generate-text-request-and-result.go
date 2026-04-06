@@ -38,6 +38,9 @@ type GenerateTextRequest struct {
 	OnChunk func(ChunkEvent)
 	// OnError is called when an error occurs during the run.
 	OnError func(error)
+	// SmoothStream enables smooth text streaming with configurable chunking.
+	// Only used by StreamText; ignored by GenerateText.
+	SmoothStream *SmoothStream
 }
 
 // StepOutput holds the result of a single tool-loop step.
