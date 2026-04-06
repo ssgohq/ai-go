@@ -152,7 +152,11 @@ func handleStepEnd(ev engine.StepEvent, result *GenerateTextResult, step *StepOu
 // text deltas, StreamResult.Events() for raw engine events, or
 // StreamResult.Consume() to block and get the full aggregated result.
 func StreamText(ctx context.Context, req GenerateTextRequest) *StreamResult {
-	return NewStreamResult(engine.Run(ctx, toEngineParams(req)))
+	ch := engine.Run(ctx, toEngineParams(req))
+	if req.SmoothStream != nil {
+		ch = req.SmoothStream.Transform(ctx, ch)
+	}
+	return NewStreamResult(ch)
 }
 
 // toEngineParams converts a public GenerateTextRequest to engine.RunParams.
