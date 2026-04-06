@@ -66,6 +66,12 @@ func WithModel(m LanguageModel) Option {
 	return func(r *GenerateTextRequest) { r.Model = m }
 }
 
+// WithSmoothStream enables smooth text streaming with the given configuration.
+// Only effective with StreamText; ignored by GenerateText.
+func WithSmoothStream(ss *SmoothStream) Option {
+	return func(r *GenerateTextRequest) { r.SmoothStream = ss }
+}
+
 // RuntimeOption configures the Runtime itself.
 type RuntimeOption func(*Runtime)
 

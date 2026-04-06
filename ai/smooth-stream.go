@@ -87,124 +87,126 @@ func (ss *SmoothStream) Transform(ctx context.Context, in_ <-chan engine.StepEve
 	out := make(chan engine.StepEvent, 64)
 	go func() {
 		defer close(out)
-
-		var buffer string
-		var bufType engine.StepEventType
-		var bufActive bool
-
-		send := func(ev engine.StepEvent) bool {
-			select {
-			case out <- ev:
-				return true
-			case <-ctx.Done():
-				return false
-			}
-		}
-
-		flush := func() bool {
-			if buffer == "" || !bufActive {
-				return true
-			}
-			var ev engine.StepEvent
-			ev.Type = bufType
-			switch bufType {
-			case engine.StepEventTextDelta:
-				ev.TextDelta = buffer
-			case engine.StepEventReasoningDelta:
-				ev.ReasoningDelta = buffer
-			}
-			buffer = ""
-			bufActive = false
-			return send(ev)
-		}
-
-		emitChunks := func() bool {
-			for {
-				if buffer == "" {
-					return true
-				}
-				chunk, remaining, err := ss.detector(buffer)
-				if err != nil {
-					// On detector error, flush entire buffer
-					return flush()
-				}
-				if chunk == "" {
-					return true
-				}
-
-				var ev engine.StepEvent
-				ev.Type = bufType
-				switch bufType {
-				case engine.StepEventTextDelta:
-					ev.TextDelta = chunk
-				case engine.StepEventReasoningDelta:
-					ev.ReasoningDelta = chunk
-				}
-				buffer = remaining
-				if !send(ev) {
-					return false
-				}
-
-				if ss.delayMs > 0 {
-					select {
-					case <-time.After(time.Duration(ss.delayMs) * time.Millisecond):
-					case <-ctx.Done():
-						return false
-					}
-				}
-			}
-		}
-
-		for ev := range in_ {
-			switch ev.Type {
-			case engine.StepEventTextDelta:
-				// Flush if type changed
-				if bufType != engine.StepEventTextDelta && buffer != "" {
-					if !flush() {
-						return
-					}
-				}
-				buffer += ev.TextDelta
-				bufType = engine.StepEventTextDelta
-				bufActive = true
-				if !emitChunks() {
-					return
-				}
-
-			case engine.StepEventReasoningDelta:
-				if bufType != engine.StepEventReasoningDelta && buffer != "" {
-					if !flush() {
-						return
-					}
-				}
-				buffer += ev.ReasoningDelta
-				bufType = engine.StepEventReasoningDelta
-				bufActive = true
-				if !emitChunks() {
-					return
-				}
-
-			default:
-				// Non-text event: flush buffer, pass through
-				if !flush() {
-					return
-				}
-				if !send(ev) {
-					return
-				}
-			}
-		}
-
-		// Stream ended: flush remaining buffer
-		flush()
+		s := &smoothState{ss: ss, ctx: ctx, out: out}
+		s.run(in_)
 	}()
 	return out
 }
 
+// smoothState holds the mutable state for a single Transform run.
+type smoothState struct {
+	ss  *SmoothStream
+	ctx context.Context
+	out chan<- engine.StepEvent
+
+	buffer    string
+	bufType   engine.StepEventType
+	bufActive bool
+}
+
+func (s *smoothState) send(ev engine.StepEvent) bool {
+	select {
+	case s.out <- ev:
+		return true
+	case <-s.ctx.Done():
+		return false
+	}
+}
+
+func (s *smoothState) flush() bool {
+	if s.buffer == "" || !s.bufActive {
+		return true
+	}
+	ev := s.makeBufferEvent(s.buffer)
+	s.buffer = ""
+	s.bufActive = false
+	return s.send(ev)
+}
+
+func (s *smoothState) makeBufferEvent(text string) engine.StepEvent {
+	var ev engine.StepEvent
+	ev.Type = s.bufType
+	if s.bufType == engine.StepEventTextDelta {
+		ev.TextDelta = text
+	} else {
+		ev.ReasoningDelta = text
+	}
+	return ev
+}
+
+func (s *smoothState) emitChunks() bool {
+	for s.buffer != "" {
+		chunk, remaining, err := s.ss.detector(s.buffer)
+		if err != nil {
+			return s.flush()
+		}
+		if chunk == "" {
+			return true
+		}
+		ev := s.makeBufferEvent(chunk)
+		s.buffer = remaining
+		if !s.send(ev) {
+			return false
+		}
+		if !s.sleepDelay() {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *smoothState) sleepDelay() bool {
+	if s.ss.delayMs <= 0 {
+		return true
+	}
+	select {
+	case <-time.After(time.Duration(s.ss.delayMs) * time.Millisecond):
+		return true
+	case <-s.ctx.Done():
+		return false
+	}
+}
+
+func (s *smoothState) appendDelta(ev engine.StepEvent) bool {
+	evType := ev.Type
+	delta := ev.TextDelta
+	if evType == engine.StepEventReasoningDelta {
+		delta = ev.ReasoningDelta
+	}
+	// Flush if type changed
+	if s.bufType != evType && s.buffer != "" {
+		if !s.flush() {
+			return false
+		}
+	}
+	s.buffer += delta
+	s.bufType = evType
+	s.bufActive = true
+	return s.emitChunks()
+}
+
+func (s *smoothState) run(in_ <-chan engine.StepEvent) {
+	for ev := range in_ {
+		switch ev.Type {
+		case engine.StepEventTextDelta, engine.StepEventReasoningDelta:
+			if !s.appendDelta(ev) {
+				return
+			}
+		default:
+			if !s.flush() || !s.send(ev) {
+				return
+			}
+		}
+	}
+	s.flush()
+}
+
 // --- Built-in chunk detectors ---
 
-var wordRegex = regexp.MustCompile(`\S+\s+`)
-var lineRegex = regexp.MustCompile(`\n+`)
+var (
+	wordRegex = regexp.MustCompile(`\S+\s+`)
+	lineRegex = regexp.MustCompile(`\n+`)
+)
 
 func wordChunkDetector(buffer string) (string, string, error) {
 	return regexDetect(wordRegex, buffer)
