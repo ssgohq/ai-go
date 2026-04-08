@@ -118,6 +118,23 @@ func TestAccumulator_EmptyArgs(t *testing.T) {
 	}
 }
 
+func TestAccumulator_NonZeroBasedIndex(t *testing.T) {
+	// Claude's OpenAI-compatible API sends tool calls starting at index=1.
+	acc := newToolCallAccumulator()
+	acc.add(makeToolCallDelta(1, "tc1", "bash", `{"command":"ls"}`))
+
+	calls := acc.completed()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].name != "bash" {
+		t.Errorf("expected tool name 'bash', got %q", calls[0].name)
+	}
+	if calls[0].args != `{"command":"ls"}` {
+		t.Errorf("unexpected args: %q", calls[0].args)
+	}
+}
+
 func TestAccumulator_TemporarilyValidJSON_StillAppends(t *testing.T) {
 	// This is the key bug scenario: JSON becomes temporarily valid during
 	// streaming but more deltas are expected. The old code would stop

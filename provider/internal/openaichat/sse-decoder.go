@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/open-ai-sdk/ai-go/ai"
@@ -115,6 +116,24 @@ func DecodeSSEStream(
 		}
 
 		emitChunkEvents(chunk, ch, params.MetadataExtractor, params.SourceExtractor, &finishEmitted)
+
+		// Debug: log tool call and finish chunks
+		if len(chunk.Choices) > 0 {
+			c := chunk.Choices[0]
+			if len(c.Delta.ToolCalls) > 0 {
+				fmt.Fprintf(
+					os.Stderr,
+					"[sse-debug] tool_call chunk: index=%d id=%q name=%q args=%q\n",
+					c.Delta.ToolCalls[0].Index,
+					c.Delta.ToolCalls[0].ID,
+					c.Delta.ToolCalls[0].Function.Name,
+					c.Delta.ToolCalls[0].Function.Arguments,
+				)
+			}
+			if c.FinishReason != "" {
+				fmt.Fprintf(os.Stderr, "[sse-debug] finish_reason=%q\n", c.FinishReason)
+			}
+		}
 	}
 
 	if lineCount == 0 {

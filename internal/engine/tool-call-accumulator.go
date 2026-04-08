@@ -1,6 +1,9 @@
 package engine
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"sort"
+)
 
 // toolCallState accumulates streaming argument fragments for a single tool call.
 type toolCallState struct {
@@ -48,16 +51,20 @@ func (a *toolCallAccumulator) add(ev StreamEvent) bool {
 	return false
 }
 
-// completed returns all accumulated tool calls in index order.
+// completed returns all accumulated tool calls sorted by index.
 func (a *toolCallAccumulator) completed() []toolCallState {
 	if len(a.states) == 0 {
 		return nil
 	}
+	// Collect indices and sort for deterministic order.
+	indices := make([]int, 0, len(a.states))
+	for idx := range a.states {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
 	out := make([]toolCallState, 0, len(a.states))
-	for i := 0; i < len(a.states); i++ {
-		if s, ok := a.states[i]; ok {
-			out = append(out, *s)
-		}
+	for _, idx := range indices {
+		out = append(out, *a.states[idx])
 	}
 	return out
 }
