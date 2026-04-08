@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 )
 
 const defaultMaxSteps = 10
@@ -71,6 +72,13 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 			return
 		}
 		fullText := sr.text
+
+		fmt.Fprintf(os.Stderr, "[engine-debug] step=%d finish=%q hasToolCalls=%v accStates=%d text_len=%d\n",
+			step, sr.finish, acc.hasToolCalls(), len(acc.states), len(fullText))
+		for idx, s := range acc.states {
+			fmt.Fprintf(os.Stderr, "[engine-debug]   tool[%d] id=%q name=%q args_len=%d hasFinished=%v\n",
+				idx, s.id, s.name, len(s.args), s.hasFinished)
+		}
 
 		if !acc.hasToolCalls() {
 			stepEndEv := StepEvent{

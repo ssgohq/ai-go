@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/open-ai-sdk/ai-go/ai"
@@ -79,6 +80,7 @@ func DecodeSSEStream(
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	lineCount := 0
+	var finishEmitted bool
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
@@ -94,10 +96,12 @@ func DecodeSSEStream(
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
-			ch <- ai.StreamEvent{
-				Type:            ai.StreamEventFinish,
-				FinishReason:    ai.FinishReasonStop,
-				RawFinishReason: "stop",
+			if !finishEmitted {
+				ch <- ai.StreamEvent{
+					Type:            ai.StreamEventFinish,
+					FinishReason:    ai.FinishReasonStop,
+					RawFinishReason: "stop",
+				}
 			}
 			return
 		}
@@ -111,7 +115,25 @@ func DecodeSSEStream(
 			return
 		}
 
-		emitChunkEvents(chunk, ch, params.MetadataExtractor, params.SourceExtractor)
+		emitChunkEvents(chunk, ch, params.MetadataExtractor, params.SourceExtractor, &finishEmitted)
+
+		// Debug: log tool call and finish chunks
+		if len(chunk.Choices) > 0 {
+			c := chunk.Choices[0]
+			if len(c.Delta.ToolCalls) > 0 {
+				fmt.Fprintf(
+					os.Stderr,
+					"[sse-debug] tool_call chunk: index=%d id=%q name=%q args=%q\n",
+					c.Delta.ToolCalls[0].Index,
+					c.Delta.ToolCalls[0].ID,
+					c.Delta.ToolCalls[0].Function.Name,
+					c.Delta.ToolCalls[0].Function.Arguments,
+				)
+			}
+			if c.FinishReason != "" {
+				fmt.Fprintf(os.Stderr, "[sse-debug] finish_reason=%q\n", c.FinishReason)
+			}
+		}
 	}
 
 	if lineCount == 0 {
@@ -134,6 +156,7 @@ func emitChunkEvents(
 	ch chan<- ai.StreamEvent,
 	metaExtractor func(StreamChunk) map[string]any,
 	sourceExtractor func(StreamChunk) []ai.Source,
+	finishEmitted *bool,
 ) {
 	// Emit usage when present (may arrive on a chunk with empty choices).
 	if chunk.Usage != nil {
@@ -173,6 +196,7 @@ func emitChunkEvents(
 			RawFinishReason:  choice.FinishReason,
 			ProviderMetadata: meta,
 		}
+		*finishEmitted = true
 	}
 
 	// Reasoning delta from reasoning_content / reasoning fields (OpenAI, DeepSeek, xAI, etc.).
