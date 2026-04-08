@@ -8,6 +8,7 @@ type toolCallState struct {
 	name             string
 	args             string
 	thoughtSignature string
+	hasFinished      bool // skip further deltas after JSON is complete
 }
 
 // toolCallAccumulator groups streaming tool-call deltas by index.
@@ -23,19 +24,26 @@ func newToolCallAccumulator() *toolCallAccumulator {
 func (a *toolCallAccumulator) add(ev StreamEvent) bool {
 	state, exists := a.states[ev.ToolCallIndex]
 	if !exists {
-		a.states[ev.ToolCallIndex] = &toolCallState{
+		s := &toolCallState{
 			id:               ev.ToolCallID,
 			name:             ev.ToolCallName,
 			args:             ev.ToolCallArgsDelta,
 			thoughtSignature: ev.ThoughtSignature,
 		}
+		if s.args != "" && json.Valid([]byte(s.args)) {
+			s.hasFinished = true
+		}
+		a.states[ev.ToolCallIndex] = s
 		return true
 	}
 	if ev.ThoughtSignature != "" && state.thoughtSignature == "" {
 		state.thoughtSignature = ev.ThoughtSignature
 	}
-	if ev.ToolCallArgsDelta != "" && !json.Valid([]byte(state.args)) {
+	if ev.ToolCallArgsDelta != "" && !state.hasFinished {
 		state.args += ev.ToolCallArgsDelta
+		if json.Valid([]byte(state.args)) {
+			state.hasFinished = true
+		}
 	}
 	return false
 }
