@@ -79,6 +79,7 @@ func DecodeSSEStream(
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	lineCount := 0
+	var finishEmitted bool
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
@@ -94,10 +95,12 @@ func DecodeSSEStream(
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
-			ch <- ai.StreamEvent{
-				Type:            ai.StreamEventFinish,
-				FinishReason:    ai.FinishReasonStop,
-				RawFinishReason: "stop",
+			if !finishEmitted {
+				ch <- ai.StreamEvent{
+					Type:            ai.StreamEventFinish,
+					FinishReason:    ai.FinishReasonStop,
+					RawFinishReason: "stop",
+				}
 			}
 			return
 		}
@@ -111,7 +114,7 @@ func DecodeSSEStream(
 			return
 		}
 
-		emitChunkEvents(chunk, ch, params.MetadataExtractor, params.SourceExtractor)
+		emitChunkEvents(chunk, ch, params.MetadataExtractor, params.SourceExtractor, &finishEmitted)
 	}
 
 	if lineCount == 0 {
@@ -134,6 +137,7 @@ func emitChunkEvents(
 	ch chan<- ai.StreamEvent,
 	metaExtractor func(StreamChunk) map[string]any,
 	sourceExtractor func(StreamChunk) []ai.Source,
+	finishEmitted *bool,
 ) {
 	// Emit usage when present (may arrive on a chunk with empty choices).
 	if chunk.Usage != nil {
@@ -173,6 +177,7 @@ func emitChunkEvents(
 			RawFinishReason:  choice.FinishReason,
 			ProviderMetadata: meta,
 		}
+		*finishEmitted = true
 	}
 
 	// Reasoning delta from reasoning_content / reasoning fields (OpenAI, DeepSeek, xAI, etc.).
