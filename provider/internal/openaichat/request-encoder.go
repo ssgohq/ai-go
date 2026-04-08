@@ -83,6 +83,9 @@ func EncodeRequest(
 	if req.Settings.Seed != nil {
 		cr.Seed = req.Settings.Seed
 	}
+	if len(req.Settings.StopSequences) > 0 {
+		cr.Stop = req.Settings.StopSequences
+	}
 
 	if len(req.Tools) > 0 || len(params.ExtraTools) > 0 {
 		toolDefs := make([]map[string]any, len(req.Tools))
@@ -214,6 +217,8 @@ func encodeContentMessage(m ai.Message) (map[string]any, error) {
 	msg := map[string]any{"role": string(m.Role)}
 	if len(parts) > 0 {
 		msg["content"] = parts
+	} else if m.Role == ai.RoleAssistant {
+		msg["content"] = nil
 	}
 	if len(toolCalls) > 0 {
 		msg["tool_calls"] = toolCalls
