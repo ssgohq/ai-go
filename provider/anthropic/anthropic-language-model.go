@@ -68,7 +68,7 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		respBody, readErr := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		if readErr != nil {
 			return nil, fmt.Errorf(
 				"anthropic: unexpected status %d (failed to read body: %w)",
@@ -85,13 +85,19 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 
 // anthropicRequest is the Messages API request body.
 type anthropicRequest struct {
-	Model     string          `json:"model"`
-	MaxTokens int             `json:"max_tokens"`
-	System    string          `json:"system,omitempty"`
-	Messages  []anthropicMsg  `json:"messages"`
-	Stream    bool            `json:"stream"`
-	Tools     []anthropicTool `json:"tools,omitempty"`
-	Thinking  *thinkingConfig `json:"thinking,omitempty"`
+	Model      string               `json:"model"`
+	MaxTokens  int                  `json:"max_tokens"`
+	System     string               `json:"system,omitempty"`
+	Messages   []anthropicMsg       `json:"messages"`
+	Stream     bool                 `json:"stream"`
+	Tools      []anthropicTool      `json:"tools,omitempty"`
+	ToolChoice *anthropicToolChoice `json:"tool_choice,omitempty"`
+	Thinking   *thinkingConfig      `json:"thinking,omitempty"`
+}
+
+type anthropicToolChoice struct {
+	Type string `json:"type"`           // "auto", "any", "tool", "none"
+	Name string `json:"name,omitempty"` // set when Type == "tool"
 }
 
 type anthropicMsg struct {
@@ -136,6 +142,10 @@ type thinkingConfig struct {
 }
 
 func (m *LanguageModel) encodeRequest(req ai.LanguageModelRequest) ([]byte, error) {
+	if req.Output != nil {
+		return nil, fmt.Errorf("anthropic: output schema is not yet supported")
+	}
+
 	ar := anthropicRequest{
 		Model:     m.modelID,
 		MaxTokens: req.Settings.MaxTokens,
@@ -145,79 +155,125 @@ func (m *LanguageModel) encodeRequest(req ai.LanguageModelRequest) ([]byte, erro
 		ar.MaxTokens = 8192
 	}
 
-	// System prompt
 	ar.System = req.System
+	ar.ToolChoice = mapToolChoice(req.ToolChoice)
+	ar.Thinking = extractThinkingConfig(req.ProviderOptions)
+	ar.Messages = encodeMessages(req.Messages)
+	ar.Tools = encodeTools(req.Tools)
 
-	// Check for extended thinking in provider options
-	if opts, ok := req.ProviderOptions["anthropic"]; ok {
-		if om, ok := opts.(map[string]any); ok {
-			if thinking, ok := om["thinking"].(bool); ok && thinking {
-				budget := 10000
-				if b, ok := om["thinkingBudget"].(int); ok {
-					budget = b
-				}
-				ar.Thinking = &thinkingConfig{Type: "enabled", BudgetTokens: budget}
-			}
-		}
-	}
-
-	// Convert messages
-	for _, msg := range req.Messages {
-		am := anthropicMsg{Role: string(msg.Role)}
-		for _, part := range msg.Content {
-			switch part.Type {
-			case ai.ContentPartTypeText:
-				am.Content = append(am.Content, contentBlock{Type: "text", Text: part.Text})
-			case ai.ContentPartTypeImageURL:
-				if len(part.Data) > 0 {
-					am.Content = append(am.Content, contentBlock{
-						Type: "image",
-						Source: &imageSource{
-							Type:      "base64",
-							MediaType: part.MimeType,
-							Data:      base64.StdEncoding.EncodeToString(part.Data),
-						},
-					})
-				}
-			case ai.ContentPartTypeToolCall:
-				am.Content = append(am.Content, contentBlock{
-					Type:  "tool_use",
-					ID:    part.ToolCallID,
-					Name:  part.ToolCallName,
-					Input: part.ToolCallArgs,
-				})
-			case ai.ContentPartTypeToolResult:
-				am.Content = append(am.Content, contentBlock{
-					Type:      "tool_result",
-					ToolUseID: part.ToolResultID,
-					Content:   part.ToolResultOutput,
-				})
-			case ai.ContentPartTypeReasoning:
-				am.Content = append(am.Content, contentBlock{
-					Type:      "thinking",
-					Thinking:  part.ReasoningText,
-					Signature: part.ThoughtSignature,
-				})
-			}
-		}
-		if len(am.Content) > 0 {
-			ar.Messages = append(ar.Messages, am)
-		}
-	}
-
-	// Convert tools
-	for _, tool := range req.Tools {
-		at := anthropicTool{
-			Name:        tool.Name,
-			Description: tool.Description,
-			InputSchema: tool.InputSchema,
-		}
-		ar.Tools = append(ar.Tools, at)
-	}
 	// Enable caching on last tool if caching is enabled
 	if m.config.EnableCaching && len(ar.Tools) > 0 {
 		ar.Tools[len(ar.Tools)-1].CacheControl = &cacheControl{Type: "ephemeral"}
 	}
 
 	return json.Marshal(ar)
+}
+
+func mapToolChoice(tc *ai.ToolChoice) *anthropicToolChoice {
+	if tc == nil {
+		return nil
+	}
+	switch tc.Type {
+	case "auto":
+		return &anthropicToolChoice{Type: "auto"}
+	case "none":
+		return &anthropicToolChoice{Type: "none"}
+	case "required":
+		return &anthropicToolChoice{Type: "any"}
+	case "tool":
+		return &anthropicToolChoice{Type: "tool", Name: tc.ToolName}
+	default:
+		return nil
+	}
+}
+
+func extractThinkingConfig(opts map[string]any) *thinkingConfig {
+	anthOpts, ok := opts["anthropic"]
+	if !ok {
+		return nil
+	}
+	om, ok := anthOpts.(map[string]any)
+	if !ok {
+		return nil
+	}
+	thinking, ok := om["thinking"].(bool)
+	if !ok || !thinking {
+		return nil
+	}
+	budget := 10000
+	if b, ok := om["thinkingBudget"].(int); ok {
+		budget = b
+	}
+	return &thinkingConfig{Type: "enabled", BudgetTokens: budget}
+}
+
+func encodeMessages(msgs []ai.Message) []anthropicMsg {
+	var out []anthropicMsg
+	for _, msg := range msgs {
+		am := anthropicMsg{Role: string(msg.Role)}
+		for _, part := range msg.Content {
+			if cb := encodeContentPart(part); cb != nil {
+				am.Content = append(am.Content, *cb)
+			}
+		}
+		if len(am.Content) > 0 {
+			out = append(out, am)
+		}
+	}
+	return out
+}
+
+func encodeContentPart(part ai.ContentPart) *contentBlock {
+	switch part.Type {
+	case ai.ContentPartTypeText:
+		return &contentBlock{Type: "text", Text: part.Text}
+	case ai.ContentPartTypeImageURL:
+		if len(part.Data) == 0 {
+			return nil
+		}
+		return &contentBlock{
+			Type: "image",
+			Source: &imageSource{
+				Type:      "base64",
+				MediaType: part.MimeType,
+				Data:      base64.StdEncoding.EncodeToString(part.Data),
+			},
+		}
+	case ai.ContentPartTypeToolCall:
+		return &contentBlock{
+			Type:  "tool_use",
+			ID:    part.ToolCallID,
+			Name:  part.ToolCallName,
+			Input: part.ToolCallArgs,
+		}
+	case ai.ContentPartTypeToolResult:
+		return &contentBlock{
+			Type:      "tool_result",
+			ToolUseID: part.ToolResultID,
+			Content:   part.ToolResultOutput,
+		}
+	case ai.ContentPartTypeReasoning:
+		return &contentBlock{
+			Type:      "thinking",
+			Thinking:  part.ReasoningText,
+			Signature: part.ThoughtSignature,
+		}
+	default:
+		return nil
+	}
+}
+
+func encodeTools(tools []ai.ToolDefinition) []anthropicTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]anthropicTool, len(tools))
+	for i, tool := range tools {
+		out[i] = anthropicTool{
+			Name:        tool.Name,
+			Description: tool.Description,
+			InputSchema: tool.InputSchema,
+		}
+	}
+	return out
 }
