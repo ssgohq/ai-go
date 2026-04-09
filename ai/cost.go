@@ -6,7 +6,8 @@ import "sync"
 type ModelPrice struct {
 	PromptPer1M     float64
 	CompletionPer1M float64
-	CachedPer1M     float64 // prompt cache read pricing (if applicable)
+	CacheReadPer1M  float64 // prompt cache read pricing
+	CacheWritePer1M float64 // prompt cache creation pricing
 }
 
 // StepCost holds the cost breakdown for a single step.
@@ -14,6 +15,8 @@ type StepCost struct {
 	Model            string
 	PromptTokens     int
 	CompletionTokens int
+	CacheReadTokens  int
+	CacheWriteTokens int
 	CostUSD          float64
 }
 
@@ -57,12 +60,15 @@ func (ct *CostTracker) Steps() []StepCost {
 func CalculateCost(model string, usage Usage, price ModelPrice) StepCost {
 	promptCost := float64(usage.PromptTokens) * price.PromptPer1M / 1_000_000
 	completionCost := float64(usage.CompletionTokens) * price.CompletionPer1M / 1_000_000
-	cachedCost := float64(usage.CacheReadTokens) * price.CachedPer1M / 1_000_000
+	cacheReadCost := float64(usage.CacheReadTokens) * price.CacheReadPer1M / 1_000_000
+	cacheWriteCost := float64(usage.CacheWriteTokens) * price.CacheWritePer1M / 1_000_000
 	return StepCost{
 		Model:            model,
 		PromptTokens:     usage.PromptTokens,
 		CompletionTokens: usage.CompletionTokens,
-		CostUSD:          promptCost + completionCost + cachedCost,
+		CacheReadTokens:  usage.CacheReadTokens,
+		CacheWriteTokens: usage.CacheWriteTokens,
+		CostUSD:          promptCost + completionCost + cacheReadCost + cacheWriteCost,
 	}
 }
 
@@ -81,10 +87,10 @@ var defaultPricing = struct {
 		"o3":                {PromptPer1M: 2.00, CompletionPer1M: 8.00},
 		"o3-mini":           {PromptPer1M: 1.10, CompletionPer1M: 4.40},
 		"o4-mini":           {PromptPer1M: 1.10, CompletionPer1M: 4.40},
-		"claude-4-sonnet":   {PromptPer1M: 3.00, CompletionPer1M: 15.00, CachedPer1M: 0.30},
-		"claude-4-opus":     {PromptPer1M: 15.00, CompletionPer1M: 75.00, CachedPer1M: 1.50},
-		"claude-3.7-sonnet": {PromptPer1M: 3.00, CompletionPer1M: 15.00, CachedPer1M: 0.30},
-		"claude-3.5-sonnet": {PromptPer1M: 3.00, CompletionPer1M: 15.00, CachedPer1M: 0.30},
+		"claude-4-sonnet":   {PromptPer1M: 3.00, CompletionPer1M: 15.00, CacheReadPer1M: 0.30, CacheWritePer1M: 3.75},
+		"claude-4-opus":     {PromptPer1M: 15.00, CompletionPer1M: 75.00, CacheReadPer1M: 1.50, CacheWritePer1M: 18.75},
+		"claude-3.7-sonnet": {PromptPer1M: 3.00, CompletionPer1M: 15.00, CacheReadPer1M: 0.30, CacheWritePer1M: 3.75},
+		"claude-3.5-sonnet": {PromptPer1M: 3.00, CompletionPer1M: 15.00, CacheReadPer1M: 0.30, CacheWritePer1M: 3.75},
 		"gemini-2.5-pro":    {PromptPer1M: 1.25, CompletionPer1M: 10.00},
 		"gemini-2.5-flash":  {PromptPer1M: 0.15, CompletionPer1M: 0.60},
 		"gemini-2.0-flash":  {PromptPer1M: 0.10, CompletionPer1M: 0.40},

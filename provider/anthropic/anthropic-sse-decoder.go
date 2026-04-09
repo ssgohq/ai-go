@@ -37,7 +37,7 @@ type sseMessageStart struct {
 type sseContentBlockStart struct {
 	Index        int `json:"index"`
 	ContentBlock struct {
-		Type string `json:"type"` // "text", "tool_use", "thinking"
+		Type string `json:"type"`
 		ID   string `json:"id,omitempty"`
 		Name string `json:"name,omitempty"`
 		Text string `json:"text,omitempty"`
@@ -47,7 +47,7 @@ type sseContentBlockStart struct {
 type sseContentBlockDelta struct {
 	Index int `json:"index"`
 	Delta struct {
-		Type        string `json:"type"` // "text_delta", "input_json_delta", "thinking_delta"
+		Type        string `json:"type"`
 		Text        string `json:"text,omitempty"`
 		PartialJSON string `json:"partial_json,omitempty"`
 		Thinking    string `json:"thinking,omitempty"`
@@ -79,19 +79,35 @@ type blockState struct {
 }
 
 // decodeSSEStream reads Anthropic SSE events and emits normalized ai.StreamEvents.
-func decodeSSEStream(ctx context.Context, body io.ReadCloser, out chan<- ai.StreamEvent) {
+func decodeSSEStream(
+	ctx context.Context,
+	body io.ReadCloser,
+	out chan<- ai.StreamEvent,
+) {
 	defer close(out)
 	defer body.Close()
 
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
 
+	send := func(ev ai.StreamEvent) bool {
+		select {
+		case out <- ev:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+
 	var eventType string
 	blocks := make(map[int]*blockState)
 
 	for scanner.Scan() {
 		if ctx.Err() != nil {
-			out <- ai.StreamEvent{Type: ai.StreamEventError, Error: ctx.Err()}
+			send(ai.StreamEvent{
+				Type:  ai.StreamEventError,
+				Error: ctx.Err(),
+			})
 			return
 		}
 
@@ -111,44 +127,49 @@ func decodeSSEStream(ctx context.Context, body io.ReadCloser, out chan<- ai.Stre
 		}
 		data := strings.TrimPrefix(line, "data: ")
 
-		dispatchSSEEvent(eventType, data, blocks, out)
+		if !dispatchSSEEvent(eventType, data, blocks, send) {
+			return
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		out <- ai.StreamEvent{
+		send(ai.StreamEvent{
 			Type:  ai.StreamEventError,
 			Error: fmt.Errorf("anthropic: read stream: %w", err),
-		}
+		})
 	}
 }
 
 // dispatchSSEEvent handles a single SSE data payload by event type.
+// Returns false if the caller should stop (channel closed or terminal error).
 func dispatchSSEEvent(
 	eventType, data string,
 	blocks map[int]*blockState,
-	out chan<- ai.StreamEvent,
-) {
+	send func(ai.StreamEvent) bool,
+) bool {
 	switch eventType {
 	case eventMessageStart:
-		handleMessageStart(data, out)
+		return handleMessageStart(data, send)
 	case eventContentBlockStart:
-		handleContentBlockStart(data, blocks, out)
+		return handleContentBlockStart(data, blocks, send)
 	case eventContentBlockDelta:
-		handleContentBlockDelta(data, blocks, out)
+		return handleContentBlockDelta(data, blocks, send)
 	case eventMessageDelta:
-		handleMessageDelta(data, out)
+		return handleMessageDelta(data, send)
 	case eventError:
-		handleError(data, out)
-	case eventPing, eventContentBlockStop, eventMessageStop:
-		// No-op
+		return handleError(data, send)
 	}
+	return true
 }
 
-func handleMessageStart(data string, out chan<- ai.StreamEvent) {
+func handleMessageStart(
+	data string,
+	send func(ai.StreamEvent) bool,
+) bool {
 	var msg sseMessageStart
 	if json.Unmarshal([]byte(data), &msg) == nil {
 		u := msg.Message.Usage
-		out <- ai.StreamEvent{
+		return send(ai.StreamEvent{
 			Type: ai.StreamEventUsage,
 			Usage: &ai.Usage{
 				PromptTokens:     u.InputTokens,
@@ -156,11 +177,16 @@ func handleMessageStart(data string, out chan<- ai.StreamEvent) {
 				CacheReadTokens:  u.CacheReadInputTokens,
 				CacheWriteTokens: u.CacheCreationInputTokens,
 			},
-		}
+		})
 	}
+	return true
 }
 
-func handleContentBlockStart(data string, blocks map[int]*blockState, out chan<- ai.StreamEvent) {
+func handleContentBlockStart(
+	data string,
+	blocks map[int]*blockState,
+	send func(ai.StreamEvent) bool,
+) bool {
 	var block sseContentBlockStart
 	if json.Unmarshal([]byte(data), &block) == nil {
 		blocks[block.Index] = &blockState{
@@ -170,73 +196,94 @@ func handleContentBlockStart(data string, blocks map[int]*blockState, out chan<-
 			name:  block.ContentBlock.Name,
 		}
 		if block.ContentBlock.Type == "tool_use" {
-			out <- ai.StreamEvent{
+			return send(ai.StreamEvent{
 				Type:          ai.StreamEventToolCallDelta,
 				ToolCallIndex: block.Index,
 				ToolCallID:    block.ContentBlock.ID,
 				ToolCallName:  block.ContentBlock.Name,
-			}
+			})
 		}
 	}
+	return true
 }
 
-func handleContentBlockDelta(data string, blocks map[int]*blockState, out chan<- ai.StreamEvent) {
+func handleContentBlockDelta(
+	data string,
+	blocks map[int]*blockState,
+	send func(ai.StreamEvent) bool,
+) bool {
 	var delta sseContentBlockDelta
 	if json.Unmarshal([]byte(data), &delta) != nil {
-		return
+		return true
 	}
 	bs := blocks[delta.Index]
 	switch delta.Delta.Type {
 	case "text_delta":
-		out <- ai.StreamEvent{
+		return send(ai.StreamEvent{
 			Type:      ai.StreamEventTextDelta,
 			TextDelta: delta.Delta.Text,
-		}
+		})
 	case "input_json_delta":
 		if bs != nil {
-			out <- ai.StreamEvent{
+			return send(ai.StreamEvent{
 				Type:              ai.StreamEventToolCallDelta,
 				ToolCallIndex:     delta.Index,
 				ToolCallID:        bs.id,
 				ToolCallName:      bs.name,
 				ToolCallArgsDelta: delta.Delta.PartialJSON,
-			}
+			})
 		}
 	case "thinking_delta":
-		out <- ai.StreamEvent{
+		return send(ai.StreamEvent{
 			Type:      ai.StreamEventReasoningDelta,
 			TextDelta: delta.Delta.Thinking,
-		}
+		})
 	}
+	return true
 }
 
-func handleMessageDelta(data string, out chan<- ai.StreamEvent) {
+func handleMessageDelta(
+	data string,
+	send func(ai.StreamEvent) bool,
+) bool {
 	var msg sseMessageDelta
-	if json.Unmarshal([]byte(data), &msg) == nil {
-		out <- ai.StreamEvent{
-			Type:            ai.StreamEventFinish,
-			FinishReason:    mapStopReason(msg.Delta.StopReason),
-			RawFinishReason: msg.Delta.StopReason,
-		}
-		if msg.Usage.OutputTokens > 0 {
-			out <- ai.StreamEvent{
-				Type: ai.StreamEventUsage,
-				Usage: &ai.Usage{
-					CompletionTokens: msg.Usage.OutputTokens,
-				},
-			}
+	if json.Unmarshal([]byte(data), &msg) != nil {
+		return true
+	}
+	// Emit usage before finish so consumers don't miss the final token count.
+	if msg.Usage.OutputTokens > 0 {
+		if !send(ai.StreamEvent{
+			Type: ai.StreamEventUsage,
+			Usage: &ai.Usage{
+				CompletionTokens: msg.Usage.OutputTokens,
+			},
+		}) {
+			return false
 		}
 	}
+	return send(ai.StreamEvent{
+		Type:            ai.StreamEventFinish,
+		FinishReason:    mapStopReason(msg.Delta.StopReason),
+		RawFinishReason: msg.Delta.StopReason,
+	})
 }
 
-func handleError(data string, out chan<- ai.StreamEvent) {
+func handleError(
+	data string,
+	send func(ai.StreamEvent) bool,
+) bool {
 	var errMsg sseError
 	if json.Unmarshal([]byte(data), &errMsg) == nil {
-		out <- ai.StreamEvent{
-			Type:  ai.StreamEventError,
-			Error: fmt.Errorf("anthropic: %s: %s", errMsg.Error.Type, errMsg.Error.Message),
-		}
+		send(ai.StreamEvent{
+			Type: ai.StreamEventError,
+			Error: fmt.Errorf(
+				"anthropic: %s: %s",
+				errMsg.Error.Type, errMsg.Error.Message,
+			),
+		})
+		return false
 	}
+	return true
 }
 
 func mapStopReason(reason string) ai.FinishReason {

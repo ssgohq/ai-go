@@ -139,6 +139,12 @@ func (rt *Runtime) buildRequest(prompt string, opts []Option) GenerateTextReques
 		o(&req)
 	}
 	rt.resolveModel(&req)
+	// Apply deferred middlewares after model resolution so they wrap the
+	// resolved model (whether set via WithModel or WithDefaultModel).
+	if len(req.Middlewares) > 0 {
+		req.Model = WrapLanguageModel(req.Model, req.Middlewares...)
+		req.Middlewares = nil
+	}
 	return req
 }
 

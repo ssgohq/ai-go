@@ -3,10 +3,13 @@ package anthropic
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"time"
 
 	"github.com/open-ai-sdk/ai-go/ai"
 )
@@ -21,10 +24,19 @@ type LanguageModel struct {
 // NewLanguageModel creates a native Anthropic language model.
 func NewLanguageModel(modelID string, cfg Config) *LanguageModel {
 	cfg = cfg.withDefaults()
+	// Use Transport.ResponseHeaderTimeout for initial handshake protection
+	// instead of Client.Timeout, which would kill long-running SSE streams.
+	transport := &http.Transport{
+		ResponseHeaderTimeout: cfg.Timeout,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+	}
 	return &LanguageModel{
 		modelID: modelID,
 		config:  cfg,
-		client:  &http.Client{Timeout: cfg.Timeout},
+		client:  &http.Client{Transport: transport},
 	}
 }
 
@@ -163,7 +175,7 @@ func (m *LanguageModel) encodeRequest(req ai.LanguageModelRequest) ([]byte, erro
 						Source: &imageSource{
 							Type:      "base64",
 							MediaType: part.MimeType,
-							Data:      string(part.Data), // needs base64 encoding
+							Data:      base64.StdEncoding.EncodeToString(part.Data),
 						},
 					})
 				}

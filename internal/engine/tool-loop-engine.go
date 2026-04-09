@@ -414,6 +414,13 @@ func executeToolCallsParallel(
 			continue
 		}
 
+		// Emit ToolCallReady before execution starts (matches sequential contract)
+		out <- StepEvent{
+			Type:         StepEventToolCallReady,
+			ToolCallID:   tc.id,
+			ToolCallName: tc.name,
+		}
+
 		results[i] = indexedResult{idx: i, tc: tc, valid: true}
 		wg.Add(1)
 		go func(idx int, tc toolCallState) {
@@ -452,9 +459,8 @@ func executeToolCallsParallel(
 			continue
 		}
 
-		out <- StepEvent{Type: StepEventToolCallReady, ToolCallID: r.tc.id, ToolCallName: r.tc.name}
-		*history = append(*history, buildToolResultMessage(r.tc.id, r.tc.name, r.modelOutput))
 		out <- StepEvent{Type: StepEventToolResult, ToolResult: r.result}
+		*history = append(*history, buildToolResultMessage(r.tc.id, r.tc.name, r.modelOutput))
 		toolNames = append(toolNames, r.tc.name)
 		stepToolCalls = append(stepToolCalls, ToolCallInfo{ID: r.tc.id, Name: r.tc.name, Args: r.tc.args})
 		stepToolResults = append(stepToolResults, *r.result)

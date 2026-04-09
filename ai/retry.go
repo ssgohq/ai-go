@@ -14,7 +14,8 @@ import (
 // RetryConfig controls retry behavior for transient LLM provider errors.
 type RetryConfig struct {
 	// MaxRetries is the maximum number of retry attempts. Default: 2.
-	MaxRetries int
+	// Use a pointer to distinguish "unset" from explicit 0.
+	MaxRetries *int
 	// InitialDelay is the base delay before the first retry. Default: 1s.
 	InitialDelay time.Duration
 	// MaxDelay caps the exponential backoff. Default: 60s.
@@ -22,61 +23,93 @@ type RetryConfig struct {
 	// BackoffFactor multiplies the delay each retry. Default: 2.0.
 	BackoffFactor float64
 	// Jitter adds randomness to prevent thundering herd. Default: true.
-	Jitter bool
+	Jitter *bool
 	// OnRetry is called before each retry attempt with the attempt number (1-based)
 	// and the error that triggered it. Optional.
 	OnRetry func(attempt int, err error)
 }
 
-func (c RetryConfig) withDefaults() RetryConfig {
-	if c.MaxRetries <= 0 {
-		c.MaxRetries = 2
-	}
-	if c.InitialDelay <= 0 {
-		c.InitialDelay = time.Second
-	}
-	if c.MaxDelay <= 0 {
-		c.MaxDelay = 60 * time.Second
-	}
-	if c.BackoffFactor <= 0 {
-		c.BackoffFactor = 2.0
-	}
-	return c
+// retryDefaults holds the resolved retry configuration with all defaults applied.
+type retryDefaults struct {
+	maxRetries    int
+	initialDelay  time.Duration
+	maxDelay      time.Duration
+	backoffFactor float64
+	jitter        bool
+	onRetry       func(attempt int, err error)
 }
+
+func (c RetryConfig) resolve() retryDefaults {
+	d := retryDefaults{
+		maxRetries:    2,
+		initialDelay:  time.Second,
+		maxDelay:      60 * time.Second,
+		backoffFactor: 2.0,
+		jitter:        true,
+		onRetry:       c.OnRetry,
+	}
+	if c.MaxRetries != nil {
+		d.maxRetries = *c.MaxRetries
+	}
+	if c.InitialDelay > 0 {
+		d.initialDelay = c.InitialDelay
+	}
+	if c.MaxDelay > 0 {
+		d.maxDelay = c.MaxDelay
+	}
+	if c.BackoffFactor > 0 {
+		d.backoffFactor = c.BackoffFactor
+	}
+	if c.Jitter != nil {
+		d.jitter = *c.Jitter
+	}
+	return d
+}
+
+// intPtr returns a pointer to n.
+func intPtr(n int) *int { return &n }
+
+// boolPtr returns a pointer to b.
+func boolPtr(b bool) *bool { return &b }
 
 // WithMaxRetries returns an Option that enables retry with the given max attempts.
 // Uses default backoff settings (1s initial, 2x factor, 60s max, jitter enabled).
+// Pass 0 to explicitly disable retries.
 func WithMaxRetries(n int) Option {
-	return WithRetry(RetryConfig{MaxRetries: n, Jitter: true})
+	return WithRetry(RetryConfig{MaxRetries: intPtr(n), Jitter: boolPtr(true)})
 }
 
-// WithRetry returns an Option that wraps the model with retry middleware.
+// WithRetry returns an Option that stores retry config for deferred model wrapping.
 func WithRetry(config RetryConfig) Option {
 	return func(r *GenerateTextRequest) {
-		if r.Model != nil {
-			r.Model = newRetryModel(r.Model, config)
+		mw := func(model LanguageModel) LanguageModel {
+			return newRetryModel(model, config)
 		}
+		r.Middlewares = append(r.Middlewares, mw)
 	}
 }
 
 // retryModel wraps a LanguageModel with retry logic.
 type retryModel struct {
 	inner  LanguageModel
-	config RetryConfig
+	config retryDefaults
 }
 
 func newRetryModel(inner LanguageModel, config RetryConfig) *retryModel {
-	return &retryModel{inner: inner, config: config.withDefaults()}
+	return &retryModel{inner: inner, config: config.resolve()}
 }
 
 func (m *retryModel) ModelID() string { return m.inner.ModelID() }
 
-func (m *retryModel) Stream(ctx context.Context, req LanguageModelRequest) (<-chan StreamEvent, error) {
+func (m *retryModel) Stream(
+	ctx context.Context,
+	req LanguageModelRequest,
+) (<-chan StreamEvent, error) {
 	var lastErr error
-	for attempt := 0; attempt <= m.config.MaxRetries; attempt++ {
+	for attempt := 0; attempt <= m.config.maxRetries; attempt++ {
 		if attempt > 0 {
-			if m.config.OnRetry != nil {
-				m.config.OnRetry(attempt, lastErr)
+			if m.config.onRetry != nil {
+				m.config.onRetry(attempt, lastErr)
 			}
 			delay := m.calculateDelay(attempt)
 			if retryAfter := parseRetryAfter(lastErr); retryAfter > 0 {
@@ -102,11 +135,13 @@ func (m *retryModel) Stream(ctx context.Context, req LanguageModelRequest) (<-ch
 }
 
 func (m *retryModel) calculateDelay(attempt int) time.Duration {
-	delay := float64(m.config.InitialDelay) * math.Pow(m.config.BackoffFactor, float64(attempt-1))
-	if delay > float64(m.config.MaxDelay) {
-		delay = float64(m.config.MaxDelay)
+	delay := float64(m.config.initialDelay) * math.Pow(
+		m.config.backoffFactor, float64(attempt-1),
+	)
+	if delay > float64(m.config.maxDelay) {
+		delay = float64(m.config.maxDelay)
 	}
-	if m.config.Jitter {
+	if m.config.jitter {
 		delay = delay * (0.5 + cryptoFloat64()*0.5)
 	}
 	return time.Duration(delay)
@@ -118,13 +153,12 @@ func isRetryable(err error) bool {
 		return false
 	}
 	s := err.Error()
-	// Check for retryable HTTP status codes in error messages
 	for _, code := range []string{"429", "500", "502", "503", "529"} {
-		if strings.Contains(s, "status "+code) || strings.Contains(s, "unexpected status "+code) {
+		if strings.Contains(s, "status "+code) ||
+			strings.Contains(s, "unexpected status "+code) {
 			return true
 		}
 	}
-	// Network-level errors
 	if strings.Contains(s, "connection refused") ||
 		strings.Contains(s, "connection reset") ||
 		strings.Contains(s, "i/o timeout") ||
@@ -135,18 +169,17 @@ func isRetryable(err error) bool {
 }
 
 // parseRetryAfter extracts a Retry-After duration from an error message.
+// Works when the provider includes the response body in the error string.
 func parseRetryAfter(err error) time.Duration {
 	if err == nil {
 		return 0
 	}
 	s := err.Error()
-	// Look for "Retry-After: N" in the error body
 	idx := strings.Index(strings.ToLower(s), "retry-after")
 	if idx < 0 {
 		return 0
 	}
 	rest := s[idx:]
-	// Try to find a number after the header name
 	for i := 0; i < len(rest); i++ {
 		if rest[i] >= '0' && rest[i] <= '9' {
 			end := i

@@ -16,11 +16,11 @@ func WrapLanguageModel(model LanguageModel, middlewares ...LanguageModelMiddlewa
 	return model
 }
 
-// WithMiddleware returns an Option that wraps the request's model with the given middlewares.
+// WithMiddleware returns an Option that wraps the request's model with the given
+// middlewares. The middlewares are stored and applied after model resolution, so
+// this works correctly with both WithModel and Runtime.WithDefaultModel.
 func WithMiddleware(middlewares ...LanguageModelMiddleware) Option {
 	return func(r *GenerateTextRequest) {
-		if r.Model != nil {
-			r.Model = WrapLanguageModel(r.Model, middlewares...)
-		}
+		r.Middlewares = append(r.Middlewares, middlewares...)
 	}
 }
