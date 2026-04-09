@@ -2,8 +2,9 @@ package ai
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"math"
-	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
@@ -106,7 +107,7 @@ func (m *retryModel) calculateDelay(attempt int) time.Duration {
 		delay = float64(m.config.MaxDelay)
 	}
 	if m.config.Jitter {
-		delay = delay * (0.5 + rand.Float64()*0.5)
+		delay = delay * (0.5 + cryptoFloat64()*0.5)
 	}
 	return time.Duration(delay)
 }
@@ -173,4 +174,11 @@ func RetryableStatusCode(code int) bool {
 		return true
 	}
 	return false
+}
+
+// cryptoFloat64 returns a cryptographically random float64 in [0, 1).
+func cryptoFloat64() float64 {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return float64(binary.LittleEndian.Uint64(b[:])>>11) / (1 << 53)
 }

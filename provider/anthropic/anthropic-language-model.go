@@ -56,7 +56,13 @@ func (m *LanguageModel) Stream(ctx context.Context, req ai.LanguageModelRequest)
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf(
+				"anthropic: unexpected status %d (failed to read body: %w)",
+				resp.StatusCode, readErr,
+			)
+		}
 		return nil, fmt.Errorf("anthropic: unexpected status %d: %s", resp.StatusCode, string(respBody))
 	}
 

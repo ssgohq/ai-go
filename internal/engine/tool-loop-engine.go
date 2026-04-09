@@ -105,7 +105,9 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		var stepToolCalls []ToolCallInfo
 		var stepToolResults []ToolResult
 		if params.ParallelToolExecution {
-			toolNames, stepToolCalls, stepToolResults = executeToolCallsParallel(ctx, out, params.Tools, toolCalls, &history, params.MaxParallelTools)
+			toolNames, stepToolCalls, stepToolResults = executeToolCallsParallel(
+				ctx, out, params.Tools, toolCalls, &history, params.MaxParallelTools,
+			)
 		} else {
 			toolNames, stepToolCalls, stepToolResults = executeToolCalls(ctx, out, params.Tools, toolCalls, &history)
 		}

@@ -341,7 +341,11 @@ func fromEngineToolResults(trs []engine.ToolResult) []ToolResult {
 	}
 	out := make([]ToolResult, len(trs))
 	for i, tr := range trs {
-		out[i] = ToolResult{ID: tr.ID, Name: tr.Name, Args: tr.Args, Output: tr.Output, Content: fromEngineToolResultContent(tr.Content)}
+		out[i] = ToolResult{
+			ID: tr.ID, Name: tr.Name, Args: tr.Args,
+			Output:  tr.Output,
+			Content: fromEngineToolResultContent(tr.Content),
+		}
 	}
 	return out
 }
