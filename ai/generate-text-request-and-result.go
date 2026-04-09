@@ -41,6 +41,10 @@ type GenerateTextRequest struct {
 	// SmoothStream enables smooth text streaming with configurable chunking.
 	// Only used by StreamText; ignored by GenerateText.
 	SmoothStream *SmoothStream
+	// ParallelToolExecution enables parallel execution of tool calls within a step.
+	ParallelToolExecution bool
+	// MaxParallelTools limits concurrent tool executions. Default: 5.
+	MaxParallelTools int
 }
 
 // StepOutput holds the result of a single tool-loop step.

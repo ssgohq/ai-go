@@ -41,17 +41,41 @@ func ToolChoiceSpecific(toolName string) ToolChoice {
 	return ToolChoice{Type: "tool", ToolName: toolName}
 }
 
+// ToolResultContent represents a single content part in a tool result.
+type ToolResultContent struct {
+	Type     string // "text" or "image"
+	Text     string // for type="text"
+	Data     []byte // for type="image"
+	MimeType string // for type="image"
+}
+
 // ToolResult holds the output of a single tool invocation.
 type ToolResult struct {
-	ID     string
-	Name   string
-	Args   string
-	Output string
+	ID      string
+	Name    string
+	Args    string
+	Output  string
+	Content []ToolResultContent // optional multi-part content
 }
 
 // ToolExecutor executes a named tool with JSON arguments and returns a result string.
 type ToolExecutor interface {
 	Execute(ctx context.Context, name, argsJSON string) (string, error)
+}
+
+// ToolResultStream allows tools to stream partial output to the UI in real-time.
+type ToolResultStream interface {
+	// Write sends a partial result to the UI (e.g., stdout from a bash command).
+	Write(partial string)
+}
+
+// StreamingToolExecutor extends ToolExecutor with streaming support.
+// Tools that implement this interface receive a stream for real-time output.
+type StreamingToolExecutor interface {
+	ToolExecutor
+	// ExecuteStreaming executes a tool with a stream for partial results.
+	// Falls back to Execute if not implemented.
+	ExecuteStreaming(ctx context.Context, name, argsJSON string, stream ToolResultStream) (string, error)
 }
 
 // ToolSet is a named collection of tool definitions and an executor.

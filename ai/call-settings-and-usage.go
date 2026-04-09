@@ -24,7 +24,9 @@ type Usage struct {
 	CompletionTokens int
 	TotalTokens      int
 	// ReasoningTokens is the number of tokens used for reasoning/thinking (e.g. Gemini thoughtsTokenCount).
-	ReasoningTokens int
+	ReasoningTokens  int
+	CacheReadTokens  int
+	CacheWriteTokens int
 }
 
 // FinishReason indicates why the model stopped generating.

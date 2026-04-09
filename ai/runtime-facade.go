@@ -72,6 +72,21 @@ func WithSmoothStream(ss *SmoothStream) Option {
 	return func(r *GenerateTextRequest) { r.SmoothStream = ss }
 }
 
+// WithParallelToolExecution enables parallel execution of tool calls within a step.
+// By default, tool calls are executed sequentially.
+func WithParallelToolExecution(enabled bool) Option {
+	return func(r *GenerateTextRequest) { r.ParallelToolExecution = enabled }
+}
+
+// WithMaxParallelTools limits the number of concurrent tool executions.
+// Default is 5 when parallel execution is enabled.
+func WithMaxParallelTools(n int) Option {
+	return func(r *GenerateTextRequest) {
+		r.ParallelToolExecution = true
+		r.MaxParallelTools = n
+	}
+}
+
 // RuntimeOption configures the Runtime itself.
 type RuntimeOption func(*Runtime)
 
