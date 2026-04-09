@@ -198,4 +198,8 @@ type RunParams struct {
 	MaxSteps    int
 	PrepareStep PrepareStepFunc
 	Callbacks   *LifecycleCallbacks
+	// ParallelToolExecution enables parallel tool execution.
+	ParallelToolExecution bool
+	// MaxParallelTools limits concurrent tool executions. Default: 5.
+	MaxParallelTools int
 }

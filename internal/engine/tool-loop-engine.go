@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 )
 
 const defaultMaxSteps = 10
@@ -28,6 +29,11 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 	var completedSteps []StepResultInfo
 
 	for step := 0; step < maxSteps; step++ {
+		if ctx.Err() != nil {
+			out <- StepEvent{Type: StepEventError, Error: ctx.Err()}
+			return
+		}
+
 		out <- StepEvent{Type: StepEventStepStart, StepNumber: step}
 
 		model := params.Model
@@ -95,7 +101,16 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		toolCalls := acc.completed()
 		history = append(history, buildAssistantToolCallMessage(fullText, toolCalls))
 
-		toolNames, stepToolCalls, stepToolResults := executeToolCalls(ctx, out, params.Tools, toolCalls, &history)
+		var toolNames []string
+		var stepToolCalls []ToolCallInfo
+		var stepToolResults []ToolResult
+		if params.ParallelToolExecution {
+			toolNames, stepToolCalls, stepToolResults = executeToolCallsParallel(
+				ctx, out, params.Tools, toolCalls, &history, params.MaxParallelTools,
+			)
+		} else {
+			toolNames, stepToolCalls, stepToolResults = executeToolCalls(ctx, out, params.Tools, toolCalls, &history)
+		}
 
 		out <- StepEvent{
 			Type:             StepEventStepEnd,
@@ -279,6 +294,11 @@ func emitFinalGeneration(
 	history []Message,
 	stepNum int,
 ) bool {
+	if ctx.Err() != nil {
+		out <- StepEvent{Type: StepEventError, Error: ctx.Err()}
+		return false
+	}
+
 	out <- StepEvent{Type: StepEventStepStart, StepNumber: stepNum}
 
 	// Strip tools so the model is forced to produce text, not more tool calls.
@@ -352,6 +372,98 @@ func executeToolCalls(
 		toolNames = append(toolNames, tc.name)
 		stepToolCalls = append(stepToolCalls, ToolCallInfo{ID: tc.id, Name: tc.name, Args: tc.args})
 		stepToolResults = append(stepToolResults, *result)
+	}
+	return toolNames, stepToolCalls, stepToolResults
+}
+
+// executeToolCallsParallel processes tool calls concurrently with a semaphore.
+func executeToolCallsParallel(
+	ctx context.Context,
+	out chan<- StepEvent,
+	tools *ToolSet,
+	toolCalls []toolCallState,
+	history *[]Message,
+	maxParallel int,
+) (toolNames []string, stepToolCalls []ToolCallInfo, stepToolResults []ToolResult) {
+	if maxParallel <= 0 {
+		maxParallel = 5
+	}
+
+	type indexedResult struct {
+		idx         int
+		tc          toolCallState
+		result      *ToolResult
+		modelOutput string
+		valid       bool
+	}
+
+	results := make([]indexedResult, len(toolCalls))
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+
+	for i, tc := range toolCalls {
+		// Validate JSON args before executing
+		if tc.args != "" && !json.Valid([]byte(tc.args)) {
+			results[i] = indexedResult{
+				idx: i, tc: tc, valid: false,
+				result: &ToolResult{
+					ID: tc.id, Name: tc.name, Args: tc.args,
+					Output: fmt.Sprintf(`{"error":"invalid JSON arguments for tool %q"}`, tc.name),
+				},
+			}
+			continue
+		}
+
+		// Emit ToolCallReady before execution starts (matches sequential contract)
+		out <- StepEvent{
+			Type:         StepEventToolCallReady,
+			ToolCallID:   tc.id,
+			ToolCallName: tc.name,
+		}
+
+		results[i] = indexedResult{idx: i, tc: tc, valid: true}
+		wg.Add(1)
+		go func(idx int, tc toolCallState) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			result := executeToolCall(ctx, tools, tc)
+			modelOutput := result.Output
+			if tools != nil {
+				for _, def := range tools.Definitions {
+					if def.Name == tc.name && def.ToModelOutput != nil {
+						modelOutput = def.ToModelOutput(result.Output)
+						break
+					}
+				}
+			}
+			results[idx].result = result
+			results[idx].modelOutput = modelOutput
+		}(i, tc)
+	}
+	wg.Wait()
+
+	// Emit events and build history in original order
+	toolNames = make([]string, 0, len(toolCalls))
+	for _, r := range results {
+		if !r.valid {
+			out <- StepEvent{
+				Type:              StepEventToolCallInvalid,
+				ToolCallID:        r.tc.id,
+				ToolCallName:      r.tc.name,
+				ToolCallArgsDelta: r.tc.args,
+			}
+			*history = append(*history, buildToolResultMessage(r.tc.id, r.tc.name, r.result.Output))
+			toolNames = append(toolNames, r.tc.name)
+			continue
+		}
+
+		out <- StepEvent{Type: StepEventToolResult, ToolResult: r.result}
+		*history = append(*history, buildToolResultMessage(r.tc.id, r.tc.name, r.modelOutput))
+		toolNames = append(toolNames, r.tc.name)
+		stepToolCalls = append(stepToolCalls, ToolCallInfo{ID: r.tc.id, Name: r.tc.name, Args: r.tc.args})
+		stepToolResults = append(stepToolResults, *r.result)
 	}
 	return toolNames, stepToolCalls, stepToolResults
 }

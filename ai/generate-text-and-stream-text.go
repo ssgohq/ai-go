@@ -70,10 +70,11 @@ func handleToolResult(ev engine.StepEvent, result *GenerateTextResult, step *Ste
 		return step
 	}
 	tr := ToolResult{
-		ID:     ev.ToolResult.ID,
-		Name:   ev.ToolResult.Name,
-		Args:   ev.ToolResult.Args,
-		Output: ev.ToolResult.Output,
+		ID:      ev.ToolResult.ID,
+		Name:    ev.ToolResult.Name,
+		Args:    ev.ToolResult.Args,
+		Output:  ev.ToolResult.Output,
+		Content: fromEngineToolResultContent(ev.ToolResult.Content),
 	}
 	result.ToolResults = append(result.ToolResults, tr)
 	if step != nil {
@@ -90,12 +91,16 @@ func handleUsage(ev engine.StepEvent, result *GenerateTextResult, step *StepOutp
 	result.TotalUsage.CompletionTokens += ev.Usage.CompletionTokens
 	result.TotalUsage.TotalTokens += ev.Usage.TotalTokens
 	result.TotalUsage.ReasoningTokens += ev.Usage.ReasoningTokens
+	result.TotalUsage.CacheReadTokens += ev.Usage.CacheReadTokens
+	result.TotalUsage.CacheWriteTokens += ev.Usage.CacheWriteTokens
 	if step != nil {
 		step.Usage = Usage{
 			PromptTokens:     ev.Usage.PromptTokens,
 			CompletionTokens: ev.Usage.CompletionTokens,
 			TotalTokens:      ev.Usage.TotalTokens,
 			ReasoningTokens:  ev.Usage.ReasoningTokens,
+			CacheReadTokens:  ev.Usage.CacheReadTokens,
+			CacheWriteTokens: ev.Usage.CacheWriteTokens,
 		}
 	}
 }
@@ -293,13 +298,15 @@ func toEngineParams(req GenerateTextRequest) engine.RunParams {
 	}
 
 	return engine.RunParams{
-		Model:       &engineModelAdapter{req.Model},
-		Request:     engReq,
-		Tools:       engTools,
-		StopWhen:    stopWhen,
-		MaxSteps:    req.MaxSteps,
-		PrepareStep: engPrepareStep,
-		Callbacks:   engCallbacks,
+		Model:                 &engineModelAdapter{req.Model},
+		Request:               engReq,
+		Tools:                 engTools,
+		StopWhen:              stopWhen,
+		MaxSteps:              req.MaxSteps,
+		PrepareStep:           engPrepareStep,
+		Callbacks:             engCallbacks,
+		ParallelToolExecution: req.ParallelToolExecution,
+		MaxParallelTools:      req.MaxParallelTools,
 	}
 }
 
@@ -334,7 +341,22 @@ func fromEngineToolResults(trs []engine.ToolResult) []ToolResult {
 	}
 	out := make([]ToolResult, len(trs))
 	for i, tr := range trs {
-		out[i] = ToolResult{ID: tr.ID, Name: tr.Name, Args: tr.Args, Output: tr.Output}
+		out[i] = ToolResult{
+			ID: tr.ID, Name: tr.Name, Args: tr.Args,
+			Output:  tr.Output,
+			Content: fromEngineToolResultContent(tr.Content),
+		}
+	}
+	return out
+}
+
+func fromEngineToolResultContent(cs []engine.ToolResultContent) []ToolResultContent {
+	if len(cs) == 0 {
+		return nil
+	}
+	out := make([]ToolResultContent, len(cs))
+	for i, c := range cs {
+		out[i] = ToolResultContent{Type: c.Type, Text: c.Text, Data: c.Data, MimeType: c.MimeType}
 	}
 	return out
 }
@@ -348,6 +370,8 @@ func fromEngineUsagePtr(u *engine.Usage) *Usage {
 		CompletionTokens: u.CompletionTokens,
 		TotalTokens:      u.TotalTokens,
 		ReasoningTokens:  u.ReasoningTokens,
+		CacheReadTokens:  u.CacheReadTokens,
+		CacheWriteTokens: u.CacheWriteTokens,
 	}
 }
 
@@ -357,6 +381,8 @@ func fromEngineUsage(u engine.Usage) Usage {
 		CompletionTokens: u.CompletionTokens,
 		TotalTokens:      u.TotalTokens,
 		ReasoningTokens:  u.ReasoningTokens,
+		CacheReadTokens:  u.CacheReadTokens,
+		CacheWriteTokens: u.CacheWriteTokens,
 	}
 }
 
@@ -490,6 +516,8 @@ func toEngineStreamEvent(ev StreamEvent) engine.StreamEvent {
 			CompletionTokens: ev.Usage.CompletionTokens,
 			TotalTokens:      ev.Usage.TotalTokens,
 			ReasoningTokens:  ev.Usage.ReasoningTokens,
+			CacheReadTokens:  ev.Usage.CacheReadTokens,
+			CacheWriteTokens: ev.Usage.CacheWriteTokens,
 		}
 	}
 	if len(ev.Warnings) > 0 {

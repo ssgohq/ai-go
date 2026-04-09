@@ -72,6 +72,21 @@ func WithSmoothStream(ss *SmoothStream) Option {
 	return func(r *GenerateTextRequest) { r.SmoothStream = ss }
 }
 
+// WithParallelToolExecution enables parallel execution of tool calls within a step.
+// By default, tool calls are executed sequentially.
+func WithParallelToolExecution(enabled bool) Option {
+	return func(r *GenerateTextRequest) { r.ParallelToolExecution = enabled }
+}
+
+// WithMaxParallelTools limits the number of concurrent tool executions.
+// Default is 5 when parallel execution is enabled.
+func WithMaxParallelTools(n int) Option {
+	return func(r *GenerateTextRequest) {
+		r.ParallelToolExecution = true
+		r.MaxParallelTools = n
+	}
+}
+
 // RuntimeOption configures the Runtime itself.
 type RuntimeOption func(*Runtime)
 
@@ -124,6 +139,12 @@ func (rt *Runtime) buildRequest(prompt string, opts []Option) GenerateTextReques
 		o(&req)
 	}
 	rt.resolveModel(&req)
+	// Apply deferred middlewares after model resolution so they wrap the
+	// resolved model (whether set via WithModel or WithDefaultModel).
+	if len(req.Middlewares) > 0 {
+		req.Model = WrapLanguageModel(req.Model, req.Middlewares...)
+		req.Middlewares = nil
+	}
 	return req
 }
 

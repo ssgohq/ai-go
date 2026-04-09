@@ -90,15 +90,26 @@ type Usage struct {
 	CompletionTokens int
 	TotalTokens      int
 	// ReasoningTokens is the number of tokens used for reasoning/thinking (e.g. Gemini thoughtsTokenCount).
-	ReasoningTokens int
+	ReasoningTokens  int
+	CacheReadTokens  int
+	CacheWriteTokens int
+}
+
+// ToolResultContent represents a single content part in a tool result.
+type ToolResultContent struct {
+	Type     string // "text" or "image"
+	Text     string // for type="text"
+	Data     []byte // for type="image"
+	MimeType string // for type="image"
 }
 
 // ToolResult holds the output of a single tool invocation.
 type ToolResult struct {
-	ID     string
-	Name   string
-	Args   string
-	Output string
+	ID      string
+	Name    string
+	Args    string
+	Output  string
+	Content []ToolResultContent // optional multi-part content
 }
 
 // StreamEventType identifies provider stream event kinds.
