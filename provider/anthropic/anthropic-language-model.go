@@ -212,11 +212,11 @@ func (m *LanguageModel) encodeRequest(req ai.LanguageModelRequest) ([]byte, erro
 			Description: tool.Description,
 			InputSchema: tool.InputSchema,
 		}
-		// Enable caching on last tool if caching is enabled
-		if m.config.EnableCaching {
-			at.CacheControl = &cacheControl{Type: "ephemeral"}
-		}
 		ar.Tools = append(ar.Tools, at)
+	}
+	// Enable caching on last tool if caching is enabled
+	if m.config.EnableCaching && len(ar.Tools) > 0 {
+		ar.Tools[len(ar.Tools)-1].CacheControl = &cacheControl{Type: "ephemeral"}
 	}
 
 	return json.Marshal(ar)
