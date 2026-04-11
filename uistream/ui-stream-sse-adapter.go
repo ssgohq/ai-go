@@ -2,6 +2,7 @@ package uistream
 
 import (
 	"io"
+	"sync"
 
 	"github.com/open-ai-sdk/ai-go/internal/engine"
 )
@@ -78,44 +79,112 @@ func (a *Adapter) Writer(w io.Writer) *Writer {
 	return NewWriter(w)
 }
 
-// Stream consumes events from ch and writes SSE lines to w.
-// It returns the full concatenated assistant text for persistence.
-//
-// When a ToolResultHook is set, it intercepts engine.StepEventToolResult events
-// to capture raw arg/output strings before forwarding to ChunkProducer.
-func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
-	// toolCache stores raw tool result strings keyed by toolCallID so the
-	// ToolResultHook can access unmodified Args and Output.
-	type toolData struct {
-		toolName string
-		argsJSON string
-		output   string
-	}
-	var toolCache map[string]toolData
-	if a.toolResultHook != nil {
-		toolCache = make(map[string]toolData)
+// interceptState holds shared mutable state between the intercept goroutine and
+// the main Stream loop, protected by a mutex.
+type interceptState struct {
+	mu         sync.Mutex
+	totalUsage UsageInfo
+	toolCache  map[string]toolData
+}
+
+// interceptEvents wraps an event channel to track usage and cache tool results.
+// The returned channel forwards all events unchanged.
+func (a *Adapter) interceptEvents(
+	ch <-chan engine.StepEvent,
+	state *interceptState,
+) <-chan engine.StepEvent {
+	intercepted := make(chan engine.StepEvent, 64)
+	go func() {
+		defer close(intercepted)
+		for ev := range ch {
+			if ev.Type == engine.StepEventUsage && ev.Usage != nil {
+				state.mu.Lock()
+				state.totalUsage.PromptTokens += ev.Usage.PromptTokens
+				state.totalUsage.CompletionTokens += ev.Usage.CompletionTokens
+				state.totalUsage.TotalTokens += ev.Usage.TotalTokens
+				state.totalUsage.ReasoningTokens += ev.Usage.ReasoningTokens
+				state.totalUsage.CacheReadTokens += ev.Usage.CacheReadTokens
+				state.totalUsage.CacheWriteTokens += ev.Usage.CacheWriteTokens
+				state.mu.Unlock()
+			}
+			if state.toolCache != nil && ev.Type == engine.StepEventToolResult && ev.ToolResult != nil {
+				tr := ev.ToolResult
+				state.mu.Lock()
+				state.toolCache[tr.ID] = toolData{
+					toolName: tr.Name,
+					argsJSON: tr.Args,
+					output:   tr.Output,
+				}
+				state.mu.Unlock()
+			}
+			intercepted <- ev
+		}
+	}()
+	return intercepted
+}
+
+// writeChunkWithHooks writes a non-finish, non-error chunk and fires registered hooks.
+func (a *Adapter) writeChunkWithHooks(wr *Writer, c Chunk, state *interceptState) {
+	wr.WriteChunk(c.Type, c.Fields)
+
+	if c.Type == ChunkSourceURL && a.sourceHook != nil {
+		sid, ok1 := c.Fields["sourceId"].(string)
+		surl, ok2 := c.Fields["url"].(string)
+		stitle, ok3 := c.Fields["title"].(string)
+		_, _, _ = ok1, ok2, ok3
+		a.sourceHook(wr, sid, surl, stitle)
 	}
 
-	// If a hook is registered, wrap ch to intercept tool result events.
-	producerCh := ch
-	if a.toolResultHook != nil {
-		intercepted := make(chan engine.StepEvent, 64)
-		go func() {
-			defer close(intercepted)
-			for ev := range ch {
-				if ev.Type == engine.StepEventToolResult && ev.ToolResult != nil {
-					tr := ev.ToolResult
-					toolCache[tr.ID] = toolData{
-						toolName: tr.Name,
-						argsJSON: tr.Args,
-						output:   tr.Output,
-					}
-				}
-				intercepted <- ev
+	if c.Type == ChunkToolOutputAvailable && a.toolResultHook != nil {
+		if tcID, ok := c.Fields["toolCallId"].(string); ok {
+			state.mu.Lock()
+			td, found := state.toolCache[tcID]
+			state.mu.Unlock()
+			if found {
+				a.toolResultHook(wr, ToolResult{
+					ToolCallID: tcID,
+					ToolName:   td.toolName,
+					ArgsJSON:   td.argsJSON,
+					Output:     td.output,
+				})
 			}
-		}()
-		producerCh = intercepted
+		}
 	}
+}
+
+// toolData stores raw tool result strings keyed by toolCallID.
+type toolData struct {
+	toolName string
+	argsJSON string
+	output   string
+}
+
+// usageMetadata returns messageMetadata containing usage, or nil if no tokens were tracked.
+func usageMetadata(u UsageInfo) map[string]any {
+	if u.TotalTokens == 0 {
+		return nil
+	}
+	return map[string]any{
+		"usage": map[string]any{
+			"promptTokens":     u.PromptTokens,
+			"completionTokens": u.CompletionTokens,
+			"totalTokens":      u.TotalTokens,
+			"reasoningTokens":  u.ReasoningTokens,
+			"cacheReadTokens":  u.CacheReadTokens,
+			"cacheWriteTokens": u.CacheWriteTokens,
+		},
+	}
+}
+
+// Stream consumes events from ch and writes SSE lines to w.
+// It returns the full concatenated assistant text for persistence.
+func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
+	state := &interceptState{}
+	if a.toolResultHook != nil {
+		state.toolCache = make(map[string]toolData)
+	}
+
+	producerCh := a.interceptEvents(ch, state)
 
 	producer := NewChunkProducer(a.msgID)
 	cs := producer.Produce(producerCh)
@@ -131,7 +200,10 @@ func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
 			if reason, ok := c.Fields["finishReason"].(string); ok {
 				lastFinishReason = reason
 			}
-			wr.WriteFinish()
+			state.mu.Lock()
+			usage := state.totalUsage
+			state.mu.Unlock()
+			wr.WriteFinishWithReason(lastFinishReason, usageMetadata(usage))
 		case ChunkError:
 			msg, ok := c.Fields["errorText"].(string)
 			if !ok {
@@ -139,33 +211,7 @@ func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
 			}
 			wr.WriteError(msg)
 		default:
-			wr.WriteChunk(c.Type, c.Fields)
-
-			// Fire source hook when a source-url chunk is emitted.
-			if c.Type == ChunkSourceURL && a.sourceHook != nil {
-				sid, ok1 := c.Fields["sourceId"].(string)
-				surl, ok2 := c.Fields["url"].(string)
-				stitle, ok3 := c.Fields["title"].(string)
-				_ = ok1
-				_ = ok2
-				_ = ok3
-				a.sourceHook(wr, sid, surl, stitle)
-			}
-
-			// Fire hook after tool-output-available with raw string data.
-			if c.Type == ChunkToolOutputAvailable && a.toolResultHook != nil {
-				tcID, ok := c.Fields["toolCallId"].(string)
-				if ok {
-					if td, found := toolCache[tcID]; found {
-						a.toolResultHook(wr, ToolResult{
-							ToolCallID: tcID,
-							ToolName:   td.toolName,
-							ArgsJSON:   td.argsJSON,
-							Output:     td.output,
-						})
-					}
-				}
-			}
+			a.writeChunkWithHooks(wr, c, state)
 		}
 	}
 
