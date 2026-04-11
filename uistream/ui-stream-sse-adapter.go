@@ -103,6 +103,8 @@ func (a *Adapter) interceptEvents(
 				state.totalUsage.CompletionTokens += ev.Usage.CompletionTokens
 				state.totalUsage.TotalTokens += ev.Usage.TotalTokens
 				state.totalUsage.ReasoningTokens += ev.Usage.ReasoningTokens
+				state.totalUsage.CacheReadTokens += ev.Usage.CacheReadTokens
+				state.totalUsage.CacheWriteTokens += ev.Usage.CacheWriteTokens
 				state.mu.Unlock()
 			}
 			if state.toolCache != nil && ev.Type == engine.StepEventToolResult && ev.ToolResult != nil {
@@ -168,6 +170,8 @@ func usageMetadata(u UsageInfo) map[string]any {
 			"completionTokens": u.CompletionTokens,
 			"totalTokens":      u.TotalTokens,
 			"reasoningTokens":  u.ReasoningTokens,
+			"cacheReadTokens":  u.CacheReadTokens,
+			"cacheWriteTokens": u.CacheWriteTokens,
 		},
 	}
 }

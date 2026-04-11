@@ -42,6 +42,8 @@ type UsageInfo struct {
 	CompletionTokens int
 	TotalTokens      int
 	ReasoningTokens  int
+	CacheReadTokens  int
+	CacheWriteTokens int
 }
 
 // ToUIMessageStream converts events from a StreamEventer into a channel of typed Chunks.
@@ -98,6 +100,8 @@ func interceptEvents(
 				totalUsage.CompletionTokens += ev.Usage.CompletionTokens
 				totalUsage.TotalTokens += ev.Usage.TotalTokens
 				totalUsage.ReasoningTokens += ev.Usage.ReasoningTokens
+				totalUsage.CacheReadTokens += ev.Usage.CacheReadTokens
+				totalUsage.CacheWriteTokens += ev.Usage.CacheWriteTokens
 			}
 			// Filter reasoning events.
 			if !opts.SendReasoning && ev.Type == engine.StepEventReasoningDelta {
