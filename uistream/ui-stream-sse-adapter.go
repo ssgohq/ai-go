@@ -2,6 +2,7 @@ package uistream
 
 import (
 	"io"
+	"sync"
 
 	"github.com/open-ai-sdk/ai-go/internal/engine"
 )
@@ -78,30 +79,41 @@ func (a *Adapter) Writer(w io.Writer) *Writer {
 	return NewWriter(w)
 }
 
+// interceptState holds shared mutable state between the intercept goroutine and
+// the main Stream loop, protected by a mutex.
+type interceptState struct {
+	mu         sync.Mutex
+	totalUsage UsageInfo
+	toolCache  map[string]toolData
+}
+
 // interceptEvents wraps an event channel to track usage and cache tool results.
 // The returned channel forwards all events unchanged.
 func (a *Adapter) interceptEvents(
 	ch <-chan engine.StepEvent,
-	totalUsage *UsageInfo,
-	toolCache map[string]toolData,
+	state *interceptState,
 ) <-chan engine.StepEvent {
 	intercepted := make(chan engine.StepEvent, 64)
 	go func() {
 		defer close(intercepted)
 		for ev := range ch {
 			if ev.Type == engine.StepEventUsage && ev.Usage != nil {
-				totalUsage.PromptTokens += ev.Usage.PromptTokens
-				totalUsage.CompletionTokens += ev.Usage.CompletionTokens
-				totalUsage.TotalTokens += ev.Usage.TotalTokens
-				totalUsage.ReasoningTokens += ev.Usage.ReasoningTokens
+				state.mu.Lock()
+				state.totalUsage.PromptTokens += ev.Usage.PromptTokens
+				state.totalUsage.CompletionTokens += ev.Usage.CompletionTokens
+				state.totalUsage.TotalTokens += ev.Usage.TotalTokens
+				state.totalUsage.ReasoningTokens += ev.Usage.ReasoningTokens
+				state.mu.Unlock()
 			}
-			if toolCache != nil && ev.Type == engine.StepEventToolResult && ev.ToolResult != nil {
+			if state.toolCache != nil && ev.Type == engine.StepEventToolResult && ev.ToolResult != nil {
 				tr := ev.ToolResult
-				toolCache[tr.ID] = toolData{
+				state.mu.Lock()
+				state.toolCache[tr.ID] = toolData{
 					toolName: tr.Name,
 					argsJSON: tr.Args,
 					output:   tr.Output,
 				}
+				state.mu.Unlock()
 			}
 			intercepted <- ev
 		}
@@ -110,7 +122,7 @@ func (a *Adapter) interceptEvents(
 }
 
 // writeChunkWithHooks writes a non-finish, non-error chunk and fires registered hooks.
-func (a *Adapter) writeChunkWithHooks(wr *Writer, c Chunk, toolCache map[string]toolData) {
+func (a *Adapter) writeChunkWithHooks(wr *Writer, c Chunk, state *interceptState) {
 	wr.WriteChunk(c.Type, c.Fields)
 
 	if c.Type == ChunkSourceURL && a.sourceHook != nil {
@@ -123,7 +135,10 @@ func (a *Adapter) writeChunkWithHooks(wr *Writer, c Chunk, toolCache map[string]
 
 	if c.Type == ChunkToolOutputAvailable && a.toolResultHook != nil {
 		if tcID, ok := c.Fields["toolCallId"].(string); ok {
-			if td, found := toolCache[tcID]; found {
+			state.mu.Lock()
+			td, found := state.toolCache[tcID]
+			state.mu.Unlock()
+			if found {
 				a.toolResultHook(wr, ToolResult{
 					ToolCallID: tcID,
 					ToolName:   td.toolName,
@@ -152,6 +167,7 @@ func usageMetadata(u UsageInfo) map[string]any {
 			"promptTokens":     u.PromptTokens,
 			"completionTokens": u.CompletionTokens,
 			"totalTokens":      u.TotalTokens,
+			"reasoningTokens":  u.ReasoningTokens,
 		},
 	}
 }
@@ -159,13 +175,12 @@ func usageMetadata(u UsageInfo) map[string]any {
 // Stream consumes events from ch and writes SSE lines to w.
 // It returns the full concatenated assistant text for persistence.
 func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
-	var toolCache map[string]toolData
+	state := &interceptState{}
 	if a.toolResultHook != nil {
-		toolCache = make(map[string]toolData)
+		state.toolCache = make(map[string]toolData)
 	}
 
-	var totalUsage UsageInfo
-	producerCh := a.interceptEvents(ch, &totalUsage, toolCache)
+	producerCh := a.interceptEvents(ch, state)
 
 	producer := NewChunkProducer(a.msgID)
 	cs := producer.Produce(producerCh)
@@ -181,7 +196,10 @@ func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
 			if reason, ok := c.Fields["finishReason"].(string); ok {
 				lastFinishReason = reason
 			}
-			wr.WriteFinishWithReason(lastFinishReason, usageMetadata(totalUsage))
+			state.mu.Lock()
+			usage := state.totalUsage
+			state.mu.Unlock()
+			wr.WriteFinishWithReason(lastFinishReason, usageMetadata(usage))
 		case ChunkError:
 			msg, ok := c.Fields["errorText"].(string)
 			if !ok {
@@ -189,7 +207,7 @@ func (a *Adapter) Stream(ch <-chan engine.StepEvent, w io.Writer) string {
 			}
 			wr.WriteError(msg)
 		default:
-			a.writeChunkWithHooks(wr, c, toolCache)
+			a.writeChunkWithHooks(wr, c, state)
 		}
 	}
 
