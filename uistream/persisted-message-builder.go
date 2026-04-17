@@ -65,6 +65,8 @@ func (b *PersistedMessageBuilder) ObserveChunk(c Chunk) {
 		b.observeSourceURL(c)
 	case ChunkSourceDocument:
 		b.observeSourceDocument(c)
+	case ChunkStartStep:
+		b.observeStartStep()
 	case ChunkFile:
 		b.observeFile(c)
 	case ChunkMessageMetadata:
@@ -72,6 +74,10 @@ func (b *PersistedMessageBuilder) ObserveChunk(c Chunk) {
 	default:
 		b.observeDataChunk(c)
 	}
+}
+
+func (b *PersistedMessageBuilder) observeStartStep() {
+	b.parts = append(b.parts, map[string]any{"type": "step-start"})
 }
 
 func (b *PersistedMessageBuilder) observeTextStart() {

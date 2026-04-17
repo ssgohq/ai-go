@@ -269,3 +269,33 @@ func TestMergeWithPersistence_IntegrationOption(t *testing.T) {
 		t.Error("persistenceBuilder should be the same instance")
 	}
 }
+
+func TestPersistedMessageBuilder_StepStartPart(t *testing.T) {
+	b := NewPersistedMessageBuilder()
+	b.ObserveChunk(Chunk{Type: ChunkStartStep})
+	b.ObserveChunk(Chunk{Type: ChunkTextStart, Fields: map[string]any{"id": "t1"}})
+	b.ObserveChunk(Chunk{Type: ChunkTextDelta, Fields: map[string]any{"id": "t1", "delta": "hello"}})
+	b.ObserveChunk(Chunk{Type: ChunkTextEnd, Fields: map[string]any{"id": "t1"}})
+	b.ObserveChunk(Chunk{Type: ChunkFinishStep})
+	b.ObserveChunk(Chunk{Type: ChunkStartStep})
+	b.ObserveChunk(Chunk{Type: ChunkTextStart, Fields: map[string]any{"id": "t2"}})
+	b.ObserveChunk(Chunk{Type: ChunkTextDelta, Fields: map[string]any{"id": "t2", "delta": "world"}})
+	b.ObserveChunk(Chunk{Type: ChunkTextEnd, Fields: map[string]any{"id": "t2"}})
+	b.ObserveChunk(Chunk{Type: ChunkFinishStep})
+
+	var parts []map[string]any
+	if err := json.Unmarshal(b.Parts(), &parts); err != nil {
+		t.Fatal(err)
+	}
+
+	// Expected: step-start, text("hello"), step-start, text("world")
+	expectedTypes := []string{"step-start", "text", "step-start", "text"}
+	if len(parts) != len(expectedTypes) {
+		t.Fatalf("expected %d parts, got %d: %v", len(expectedTypes), len(parts), parts)
+	}
+	for i, expected := range expectedTypes {
+		if parts[i]["type"] != expected {
+			t.Errorf("part[%d]: expected type %q, got %q", i, expected, parts[i]["type"])
+		}
+	}
+}
