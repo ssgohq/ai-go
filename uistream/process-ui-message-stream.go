@@ -73,180 +73,259 @@ func ProcessUIMessageStream(chunks <-chan Chunk, state *StreamingUIMessageState)
 	return out
 }
 
+type chunkStateHandler func(c Chunk, state *StreamingUIMessageState)
+
+var chunkStateHandlers = map[string]chunkStateHandler{
+	ChunkStart:               handleChunkStart,
+	ChunkStartStep:           handleChunkStartStep,
+	ChunkFinishStep:          handleChunkFinishStep,
+	ChunkTextStart:           handleChunkTextStart,
+	ChunkTextDelta:           handleChunkTextDelta,
+	ChunkTextEnd:             handleChunkTextEnd,
+	ChunkReasoningStart:      handleChunkReasoningStart,
+	ChunkReasoningDelta:      handleChunkReasoningDelta,
+	ChunkReasoningEnd:        handleChunkReasoningEnd,
+	ChunkToolInputStart:      handleChunkToolInputStart,
+	ChunkToolInputDelta:      handleChunkToolInputDelta,
+	ChunkToolInputAvailable:  handleChunkToolInputAvailable,
+	ChunkToolOutputAvailable: handleChunkToolOutputAvailable,
+	ChunkToolInputError:      handleChunkToolInputError,
+	ChunkToolOutputError:     handleChunkToolOutputError,
+	ChunkToolOutputDenied:    handleChunkToolOutputDenied,
+	ChunkSourceURL:           handleChunkSourceURL,
+	ChunkSourceDocument:      handleChunkSourceDocument,
+	ChunkFile:                handleChunkFile,
+	ChunkFinish:              handleChunkFinish,
+	ChunkMessageMetadata:     handleChunkMessageMetadata,
+	ChunkError:               handleChunkError,
+}
+
 // processChunkIntoState mutates state based on the incoming chunk.
 func processChunkIntoState(c Chunk, state *StreamingUIMessageState) {
-	switch c.Type {
-	case ChunkStart:
-		if id, ok := c.Fields["messageId"].(string); ok && id != "" {
-			state.Message.ID = id
-		}
-		mergeMessageMetadata(state, c.Fields)
-
-	case ChunkStartStep:
-		state.Message.Parts = append(state.Message.Parts, UIMessagePart{"type": "step-start"})
-
-	case ChunkFinishStep:
-		// Reset active text and reasoning — new step starts fresh.
-		state.ActiveTextParts = make(map[string]*UIMessagePart)
-		state.ActiveReasoningParts = make(map[string]*UIMessagePart)
-
-	case ChunkTextStart:
-		id := chunkID(c)
-		part := UIMessagePart{"type": "text", "text": ""}
-		state.ActiveTextParts[id] = &part
-		state.Message.Parts = append(state.Message.Parts, part)
-
-	case ChunkTextDelta:
-		id := chunkID(c)
-		if tp := state.ActiveTextParts[id]; tp != nil {
-			if delta, ok := c.Fields["delta"].(string); ok {
-				(*tp)["text"] = (*tp)["text"].(string) + delta
-			}
-		}
-
-	case ChunkTextEnd:
-		id := chunkID(c)
-		delete(state.ActiveTextParts, id)
-
-	case ChunkReasoningStart:
-		id := chunkID(c)
-		part := UIMessagePart{"type": "reasoning", "text": ""}
-		state.ActiveReasoningParts[id] = &part
-		state.Message.Parts = append(state.Message.Parts, part)
-
-	case ChunkReasoningDelta:
-		id := chunkID(c)
-		if rp := state.ActiveReasoningParts[id]; rp != nil {
-			if delta, ok := c.Fields["delta"].(string); ok {
-				(*rp)["text"] = (*rp)["text"].(string) + delta
-			}
-		}
-
-	case ChunkReasoningEnd:
-		id := chunkID(c)
-		delete(state.ActiveReasoningParts, id)
-
-	case ChunkToolInputStart:
-		tcID, _ := c.Fields["toolCallId"].(string)
-		toolName, _ := c.Fields["toolName"].(string)
-		state.PartialToolCalls[tcID] = &partialToolCall{
-			ToolName: toolName,
-			Index:    len(state.Message.Parts),
-		}
-		part := UIMessagePart{
-			"type":       "tool-invocation",
-			"toolCallId": tcID,
-			"toolName":   toolName,
-			"state":      "input-streaming",
-		}
-		state.Message.Parts = append(state.Message.Parts, part)
-
-	case ChunkToolInputDelta:
-		tcID, _ := c.Fields["toolCallId"].(string)
-		if ptc := state.PartialToolCalls[tcID]; ptc != nil {
-			if delta, ok := c.Fields["inputTextDelta"].(string); ok {
-				ptc.Text += delta
-			}
-			// Update the part's input with partial JSON if valid.
-			if idx := ptc.Index; idx < len(state.Message.Parts) {
-				var parsed any
-				if json.Valid([]byte(ptc.Text)) {
-					_ = json.Unmarshal([]byte(ptc.Text), &parsed)
-					state.Message.Parts[idx]["input"] = parsed
-				}
-			}
-		}
-
-	case ChunkToolInputAvailable:
-		tcID, _ := c.Fields["toolCallId"].(string)
-		toolName, _ := c.Fields["toolName"].(string)
-		updateOrAddToolPart(state, tcID, toolName, UIMessagePart{
-			"type":       "tool-invocation",
-			"toolCallId": tcID,
-			"toolName":   toolName,
-			"state":      "input-available",
-			"input":      c.Fields["input"],
-		})
-
-	case ChunkToolOutputAvailable:
-		tcID, _ := c.Fields["toolCallId"].(string)
-		updateToolPartFields(state, tcID, map[string]any{
-			"state":  "output-available",
-			"output": c.Fields["output"],
-		})
-
-	case ChunkToolInputError:
-		tcID, _ := c.Fields["toolCallId"].(string)
-		toolName, _ := c.Fields["toolName"].(string)
-		updateOrAddToolPart(state, tcID, toolName, UIMessagePart{
-			"type":       "tool-invocation",
-			"toolCallId": tcID,
-			"toolName":   toolName,
-			"state":      "output-error",
-			"input":      c.Fields["input"],
-			"errorText":  c.Fields["errorText"],
-		})
-
-	case ChunkToolOutputError:
-		tcID, _ := c.Fields["toolCallId"].(string)
-		updateToolPartFields(state, tcID, map[string]any{
-			"state":     "output-error",
-			"errorText": c.Fields["errorText"],
-		})
-
-	case ChunkToolOutputDenied:
-		tcID, _ := c.Fields["toolCallId"].(string)
-		updateToolPartFields(state, tcID, map[string]any{
-			"state": "output-denied",
-		})
-
-	case ChunkSourceURL:
-		state.Message.Parts = append(state.Message.Parts, UIMessagePart{
-			"type":     "source-url",
-			"sourceId": c.Fields["sourceId"],
-			"url":      c.Fields["url"],
-			"title":    c.Fields["title"],
-		})
-
-	case ChunkSourceDocument:
-		part := UIMessagePart{
-			"type":      "source-document",
-			"sourceId":  c.Fields["sourceId"],
-			"mediaType": c.Fields["mediaType"],
-			"title":     c.Fields["title"],
-		}
-		if fn, ok := c.Fields["filename"].(string); ok && fn != "" {
-			part["filename"] = fn
-		}
-		state.Message.Parts = append(state.Message.Parts, part)
-
-	case ChunkFile:
-		part := UIMessagePart{"type": "file"}
-		for _, key := range []string{"url", "mediaType", "name"} {
-			if v, ok := c.Fields[key].(string); ok && v != "" {
-				part[key] = v
-			}
-		}
-		state.Message.Parts = append(state.Message.Parts, part)
-
-	case ChunkFinish:
-		if fr, ok := c.Fields["finishReason"].(string); ok {
-			state.FinishReason = fr
-		}
-		mergeMessageMetadata(state, c.Fields)
-
-	case ChunkMessageMetadata:
-		mergeMessageMetadata(state, c.Fields)
-
-	case ChunkError:
-		// Errors are passed through but don't mutate message state.
+	if handler := chunkStateHandlers[c.Type]; handler != nil {
+		handler(c, state)
 	}
+}
+
+func handleChunkStart(c Chunk, state *StreamingUIMessageState) {
+	if id, ok := c.Fields["messageId"].(string); ok && id != "" {
+		state.Message.ID = id
+	}
+	mergeMessageMetadata(state, c.Fields)
+}
+
+func handleChunkStartStep(_ Chunk, state *StreamingUIMessageState) {
+	state.Message.Parts = append(state.Message.Parts, UIMessagePart{"type": "step-start"})
+}
+
+func handleChunkFinishStep(_ Chunk, state *StreamingUIMessageState) {
+	state.ActiveTextParts = make(map[string]*UIMessagePart)
+	state.ActiveReasoningParts = make(map[string]*UIMessagePart)
+}
+
+func handleChunkTextStart(c Chunk, state *StreamingUIMessageState) {
+	id := chunkID(c)
+	part := UIMessagePart{"type": "text", "text": ""}
+	state.ActiveTextParts[id] = &part
+	state.Message.Parts = append(state.Message.Parts, part)
+}
+
+func handleChunkTextDelta(c Chunk, state *StreamingUIMessageState) {
+	id := chunkID(c)
+	appendChunkDeltaToPart(state.ActiveTextParts[id], c.Fields["delta"])
+}
+
+func handleChunkTextEnd(c Chunk, state *StreamingUIMessageState) {
+	delete(state.ActiveTextParts, chunkID(c))
+}
+
+func handleChunkReasoningStart(c Chunk, state *StreamingUIMessageState) {
+	id := chunkID(c)
+	part := UIMessagePart{"type": "reasoning", "text": ""}
+	state.ActiveReasoningParts[id] = &part
+	state.Message.Parts = append(state.Message.Parts, part)
+}
+
+func handleChunkReasoningDelta(c Chunk, state *StreamingUIMessageState) {
+	id := chunkID(c)
+	appendChunkDeltaToPart(state.ActiveReasoningParts[id], c.Fields["delta"])
+}
+
+func handleChunkReasoningEnd(c Chunk, state *StreamingUIMessageState) {
+	delete(state.ActiveReasoningParts, chunkID(c))
+}
+
+func handleChunkToolInputStart(c Chunk, state *StreamingUIMessageState) {
+	tcID := stringField(c.Fields, "toolCallId")
+	if tcID == "" {
+		return
+	}
+	toolName := stringField(c.Fields, "toolName")
+	state.PartialToolCalls[tcID] = &partialToolCall{
+		ToolName: toolName,
+		Index:    len(state.Message.Parts),
+	}
+	state.Message.Parts = append(state.Message.Parts, UIMessagePart{
+		"type":       "tool-invocation",
+		"toolCallId": tcID,
+		"toolName":   toolName,
+		"state":      "input-streaming",
+	})
+}
+
+func handleChunkToolInputDelta(c Chunk, state *StreamingUIMessageState) {
+	tcID := stringField(c.Fields, "toolCallId")
+	if tcID == "" {
+		return
+	}
+	ptc := state.PartialToolCalls[tcID]
+	if ptc == nil {
+		return
+	}
+	if delta, ok := c.Fields["inputTextDelta"].(string); ok {
+		ptc.Text += delta
+	}
+	if idx := ptc.Index; idx < len(state.Message.Parts) && json.Valid([]byte(ptc.Text)) {
+		var parsed any
+		if err := json.Unmarshal([]byte(ptc.Text), &parsed); err == nil {
+			state.Message.Parts[idx]["input"] = parsed
+		}
+	}
+}
+
+func handleChunkToolInputAvailable(c Chunk, state *StreamingUIMessageState) {
+	tcID := stringField(c.Fields, "toolCallId")
+	if tcID == "" {
+		return
+	}
+	toolName := stringField(c.Fields, "toolName")
+	updateOrAddToolPart(state, tcID, toolName, UIMessagePart{
+		"type":       "tool-invocation",
+		"toolCallId": tcID,
+		"toolName":   toolName,
+		"state":      "input-available",
+		"input":      c.Fields["input"],
+	})
+}
+
+func handleChunkToolInputError(c Chunk, state *StreamingUIMessageState) {
+	tcID := stringField(c.Fields, "toolCallId")
+	toolName := stringField(c.Fields, "toolName")
+	updateOrAddToolPart(state, tcID, toolName, UIMessagePart{
+		"type":       "tool-invocation",
+		"toolCallId": tcID,
+		"toolName":   toolName,
+		"state":      "output-error",
+		"input":      c.Fields["input"],
+		"errorText":  c.Fields["errorText"],
+	})
+}
+
+func handleChunkToolOutputAvailable(c Chunk, state *StreamingUIMessageState) {
+	tcID := stringField(c.Fields, "toolCallId")
+	if tcID == "" {
+		return
+	}
+	updateToolPartFields(state, tcID, map[string]any{
+		"state":  "output-available",
+		"output": c.Fields["output"],
+	})
+}
+
+func handleChunkToolOutputError(c Chunk, state *StreamingUIMessageState) {
+	tcID := stringField(c.Fields, "toolCallId")
+	if tcID == "" {
+		return
+	}
+	updateToolPartFields(state, tcID, map[string]any{
+		"state":     "output-error",
+		"errorText": c.Fields["errorText"],
+	})
+}
+
+func handleChunkToolOutputDenied(c Chunk, state *StreamingUIMessageState) {
+	tcID := stringField(c.Fields, "toolCallId")
+	if tcID == "" {
+		return
+	}
+	updateToolPartFields(state, tcID, map[string]any{
+		"state": "output-denied",
+	})
+}
+
+func handleChunkSourceURL(c Chunk, state *StreamingUIMessageState) {
+	state.Message.Parts = append(state.Message.Parts, UIMessagePart{
+		"type":     "source-url",
+		"sourceId": c.Fields["sourceId"],
+		"url":      c.Fields["url"],
+		"title":    c.Fields["title"],
+	})
+}
+
+func handleChunkSourceDocument(c Chunk, state *StreamingUIMessageState) {
+	part := UIMessagePart{
+		"type":      "source-document",
+		"sourceId":  c.Fields["sourceId"],
+		"mediaType": c.Fields["mediaType"],
+		"title":     c.Fields["title"],
+	}
+	if fn, ok := c.Fields["filename"].(string); ok && fn != "" {
+		part["filename"] = fn
+	}
+	state.Message.Parts = append(state.Message.Parts, part)
+}
+
+func handleChunkFile(c Chunk, state *StreamingUIMessageState) {
+	part := UIMessagePart{"type": "file"}
+	for _, key := range []string{"url", "mediaType", "name"} {
+		if v, ok := c.Fields[key].(string); ok && v != "" {
+			part[key] = v
+		}
+	}
+	state.Message.Parts = append(state.Message.Parts, part)
+}
+
+func handleChunkFinish(c Chunk, state *StreamingUIMessageState) {
+	if fr, ok := c.Fields["finishReason"].(string); ok {
+		state.FinishReason = fr
+	}
+	mergeMessageMetadata(state, c.Fields)
+}
+
+func handleChunkMessageMetadata(c Chunk, state *StreamingUIMessageState) {
+	mergeMessageMetadata(state, c.Fields)
+}
+
+func handleChunkError(_ Chunk, _ *StreamingUIMessageState) {
+	// Errors are passed through but don't mutate message state.
+}
+
+func appendChunkDeltaToPart(part *UIMessagePart, rawDelta any) {
+	if part == nil {
+		return
+	}
+	delta, ok := rawDelta.(string)
+	if !ok {
+		return
+	}
+	existing, ok := (*part)["text"].(string)
+	if !ok {
+		existing = ""
+	}
+	(*part)["text"] = existing + delta
 }
 
 // chunkID extracts the "id" field from a chunk.
 func chunkID(c Chunk) string {
-	id, _ := c.Fields["id"].(string)
-	return id
+	return stringField(c.Fields, "id")
+}
+
+func stringField(fields map[string]any, key string) string {
+	value, ok := fields[key].(string)
+	if !ok {
+		return ""
+	}
+	return value
 }
 
 // mergeMessageMetadata merges messageMetadata from chunk fields into the state.

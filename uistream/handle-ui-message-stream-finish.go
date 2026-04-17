@@ -98,8 +98,8 @@ func HandleUIMessageStreamFinish(chunks <-chan Chunk, opts HandleUIMessageStream
 		for c := range chunks {
 			// Phase 1: inject messageId into start chunk.
 			if c.Type == ChunkStart && messageID != "" {
-				existing, _ := c.Fields["messageId"].(string)
-				if existing == "" {
+				existing, ok := c.Fields["messageId"].(string)
+				if !ok || existing == "" {
 					if c.Fields == nil {
 						c.Fields = make(map[string]any)
 					}
@@ -143,8 +143,8 @@ func injectMessageID(chunks <-chan Chunk, messageID string) <-chan Chunk {
 		defer close(out)
 		for c := range chunks {
 			if c.Type == ChunkStart {
-				existing, _ := c.Fields["messageId"].(string)
-				if existing == "" {
+				existing, ok := c.Fields["messageId"].(string)
+				if !ok || existing == "" {
 					if c.Fields == nil {
 						c.Fields = make(map[string]any)
 					}
