@@ -30,6 +30,7 @@ func NewLanguageModel(modelID string, cfg Config) *LanguageModel {
 		APIKey:       cfg.APIKey,
 		Timeout:      cfg.Timeout,
 		Headers:      cfg.Headers,
+		HTTPClient:   cfg.HTTPClient,
 		Capabilities: openaichat.CapabilityFlags{
 			SupportsStructuredOutput: cfg.SupportsStructuredOutput,
 			SupportsStreamUsage:      cfg.SupportsStreamUsage,

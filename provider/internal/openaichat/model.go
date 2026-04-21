@@ -48,6 +48,10 @@ type ModelConfig struct {
 	// the timer. If no data arrives within this duration, the stream is aborted
 	// with ErrChunkTimeout. Zero means no per-chunk timeout.
 	ChunkTimeout time.Duration
+	// HTTPClient is an optional custom client. When non-nil, Timeout is ignored
+	// and the caller owns transport + timeout. Used for injecting logging
+	// RoundTrippers or proxy behavior without changing this package.
+	HTTPClient *http.Client
 }
 
 // LanguageModel implements ai.LanguageModel using OpenAI-style chat completions.
@@ -58,13 +62,17 @@ type LanguageModel struct {
 
 // NewLanguageModel creates a LanguageModel with the given configuration.
 func NewLanguageModel(cfg ModelConfig) *LanguageModel {
-	timeout := cfg.Timeout
-	if timeout == 0 {
-		timeout = 120 * time.Second
+	client := cfg.HTTPClient
+	if client == nil {
+		timeout := cfg.Timeout
+		if timeout == 0 {
+			timeout = 120 * time.Second
+		}
+		client = &http.Client{Timeout: timeout}
 	}
 	return &LanguageModel{
 		cfg:    cfg,
-		client: &http.Client{Timeout: timeout},
+		client: client,
 	}
 }
 

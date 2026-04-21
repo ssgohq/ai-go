@@ -3,7 +3,10 @@
 // the OpenAI chat completions API.
 package openai_compatible
 
-import "time"
+import (
+	"net/http"
+	"time"
+)
 
 // Config holds options for constructing a generic OpenAI-compatible LanguageModel.
 type Config struct {
@@ -30,4 +33,8 @@ type Config struct {
 	TransformRequest func(req map[string]any) map[string]any
 	// ChunkTimeout is the per-chunk SSE read timeout. Zero means disabled.
 	ChunkTimeout time.Duration
+	// HTTPClient is an optional custom client. When set, Timeout is ignored and
+	// callers own the transport + timeout. Useful for injecting logging
+	// RoundTrippers or proxy settings without touching this package.
+	HTTPClient *http.Client
 }

@@ -301,8 +301,18 @@ func emitFinalGeneration(
 
 	out <- StepEvent{Type: StepEventStepStart, StepNumber: stepNum}
 
-	// Strip tools so the model is forced to produce text, not more tool calls.
-	eventCh, err := params.Model.Stream(ctx, Request{Messages: history})
+	// Keep the tool schema in the request but force ToolChoice="none". Stripping
+	// the tools entirely causes some gateways (notably Harmony-parsing front-ends
+	// for gpt-oss / gpt-5 family) to lose the schema context they need to route
+	// commentary-channel tool-call tokens, leading to raw Harmony output leaking
+	// into delta.content. ToolChoice="none" delivers the same intent — prohibit
+	// further tool calls — without that side effect.
+	noneChoice := &ToolChoice{Type: "none"}
+	eventCh, err := params.Model.Stream(ctx, Request{
+		Messages:   history,
+		Tools:      params.Request.Tools,
+		ToolChoice: noneChoice,
+	})
 	if err != nil {
 		out <- StepEvent{Type: StepEventError, Error: fmt.Errorf("final step: start stream: %w", err)}
 		return false
