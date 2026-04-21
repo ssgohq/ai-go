@@ -163,18 +163,17 @@ func TestRunLoop_StepCountIs(t *testing.T) {
 }
 
 func TestRunLoop_MaxStepsExhausted(t *testing.T) {
+	// When maxSteps is hit with pending tool_calls, the loop exits honestly
+	// with the last step's finish reason (ToolCalls). No forced "final text"
+	// pass is fired — matches ai-sdk-node semantics. Caller decides how to
+	// continue (bump budget, call again with tool_choice=none, etc.).
 	exec := &mockExecutor{}
-	calls := make([][]StreamEvent, 4) // 3 tool-call steps + 1 final text step
+	calls := make([][]StreamEvent, 3) // exactly 3 tool-call steps, nothing more
 	for i := 0; i < 3; i++ {
 		calls[i] = []StreamEvent{
 			toolCallEvt(0, "tc", "loop", `{}`),
 			finishEvt(FinishReasonToolCalls),
 		}
-	}
-	// Final generation step (no tools) returns text.
-	calls[3] = []StreamEvent{
-		{Type: StreamEventTextDelta, TextDelta: "done"},
-		finishEvt(FinishReasonStop),
 	}
 	model := &mockModel{calls: calls}
 
@@ -184,17 +183,28 @@ func TestRunLoop_MaxStepsExhausted(t *testing.T) {
 		MaxSteps: 3,
 	})
 
-	var doneCount int
+	var doneCount, stepStarts int
+	var lastFinish FinishReason
 	for ev := range ch {
-		if ev.Type == StepEventDone {
+		switch ev.Type {
+		case StepEventStepStart:
+			stepStarts++
+		case StepEventStepEnd:
+			lastFinish = ev.FinishReason
+		case StepEventDone:
 			doneCount++
-		}
-		if ev.Type == StepEventError {
+		case StepEventError:
 			t.Fatalf("unexpected error: %v", ev.Error)
 		}
 	}
 	if doneCount != 1 {
 		t.Errorf("expected 1 done event, got %d", doneCount)
+	}
+	if stepStarts != 3 {
+		t.Errorf("expected exactly 3 step starts (no forced final pass), got %d", stepStarts)
+	}
+	if lastFinish != FinishReasonToolCalls {
+		t.Errorf("expected last step finish=ToolCalls (honest exit), got %v", lastFinish)
 	}
 }
 

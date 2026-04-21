@@ -27,6 +27,10 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 
 	history := buildInitialHistory(params.Request)
 	var completedSteps []StepResultInfo
+	// lastSR captures the final iteration's streamResult so we can report an
+	// accurate finish reason when the loop exits with pending tool_calls at
+	// maxSteps (matching ai-sdk-node: honest return, no forced text step).
+	var lastSR streamResult
 
 	for step := 0; step < maxSteps; step++ {
 		if ctx.Err() != nil {
@@ -76,6 +80,7 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		if fatalErr {
 			return
 		}
+		lastSR = sr
 		fullText := sr.text
 
 		if !acc.hasToolCalls() {
@@ -138,14 +143,15 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		}
 	}
 
-	// maxSteps exhausted after tool calls — run one final generation so the model
-	// can produce a text response that incorporates the tool results.
-	if ok := emitFinalGeneration(ctx, out, params, history, maxSteps); !ok {
-		return
-	}
-
+	// maxSteps exhausted with pending tool_calls — exit honestly using the
+	// last step's streamResult. Caller sees FinishReasonToolCalls and can
+	// decide whether to continue (e.g. bump the budget, force tool_choice=none
+	// on a follow-up call) or surface the partial result.
+	// Historical note: this used to fire a tool-less "final generation" pass
+	// which caused gateway Harmony-parsing issues on gpt-oss/gpt-5 family.
+	// Matches ai-sdk-node semantics (see packages/ai generate-text.ts:1008).
 	emitStructuredOutput(ctx, out, params, history)
-	emitOnFinish(params.Callbacks, completedSteps, streamResult{finish: FinishReasonStop})
+	emitOnFinish(params.Callbacks, completedSteps, lastSR)
 	out <- StepEvent{Type: StepEventDone}
 }
 
@@ -282,56 +288,6 @@ func handleToolCallDelta(
 			cb.OnChunk(stepEv)
 		}
 	}
-}
-
-// emitFinalGeneration runs a tool-free generation after maxSteps are exhausted so the
-// model produces a text response incorporating earlier tool results. Returns false if
-// a fatal error was emitted and the caller should return immediately.
-func emitFinalGeneration(
-	ctx context.Context,
-	out chan<- StepEvent,
-	params RunParams,
-	history []Message,
-	stepNum int,
-) bool {
-	if ctx.Err() != nil {
-		out <- StepEvent{Type: StepEventError, Error: ctx.Err()}
-		return false
-	}
-
-	out <- StepEvent{Type: StepEventStepStart, StepNumber: stepNum}
-
-	// Keep the tool schema in the request but force ToolChoice="none". Stripping
-	// the tools entirely causes some gateways (notably Harmony-parsing front-ends
-	// for gpt-oss / gpt-5 family) to lose the schema context they need to route
-	// commentary-channel tool-call tokens, leading to raw Harmony output leaking
-	// into delta.content. ToolChoice="none" delivers the same intent — prohibit
-	// further tool calls — without that side effect.
-	noneChoice := &ToolChoice{Type: "none"}
-	eventCh, err := params.Model.Stream(ctx, Request{
-		Messages:   history,
-		Tools:      params.Request.Tools,
-		ToolChoice: noneChoice,
-	})
-	if err != nil {
-		out <- StepEvent{Type: StepEventError, Error: fmt.Errorf("final step: start stream: %w", err)}
-		return false
-	}
-
-	sr, fatalErr := consumeStream(eventCh, out, nil, params.Callbacks)
-	if fatalErr {
-		return false
-	}
-
-	out <- StepEvent{
-		Type:             StepEventStepEnd,
-		StepNumber:       stepNum,
-		FinishReason:     sr.finish,
-		RawFinishReason:  sr.rawFinish,
-		ProviderMetadata: sr.providerMeta,
-		Warnings:         sr.warnings,
-	}
-	return true
 }
 
 // executeToolCalls processes a batch of completed tool calls: validates JSON args,
