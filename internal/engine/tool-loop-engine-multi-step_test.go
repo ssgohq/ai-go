@@ -208,6 +208,109 @@ func TestRunLoop_MaxStepsExhausted(t *testing.T) {
 	}
 }
 
+// TestRunLoop_ToolsNeverStripped is the regression guard for the Harmony-leak
+// family of bugs (Thai / Chinese / private-use-unicode garbage appearing in
+// delta.content when the gateway loses tool schema context). Verifies that no
+// model call inside the tool loop is issued with a smaller tools slice than
+// what the caller supplied — neither during normal steps nor at maxSteps
+// exhaustion. Matches ai-sdk-node behavior where every doGenerate call sees
+// the same stepTools slice unless the caller explicitly filters via
+// PrepareStep.ActiveTools.
+func TestRunLoop_ToolsNeverStripped(t *testing.T) {
+	exec := &mockExecutor{}
+	// 2 tool-call steps, then one text step. No emitFinalGeneration should fire.
+	calls := [][]StreamEvent{
+		{toolCallEvt(0, "tc1", "search", `{}`), finishEvt(FinishReasonToolCalls)},
+		{toolCallEvt(0, "tc2", "search", `{}`), finishEvt(FinishReasonToolCalls)},
+		{textEvt("final answer"), finishEvt(FinishReasonStop)},
+	}
+	rm := &recordingModel{mockModel: mockModel{calls: calls}}
+
+	inputTools := []ToolDefinition{
+		{Name: "search"},
+		{Name: "fetch"},
+		{Name: "browse"},
+	}
+
+	ch := Run(context.Background(), RunParams{
+		Model: rm,
+		Request: Request{
+			Tools:    inputTools,
+			Messages: []Message{{Role: "user", Content: []ContentPart{{Type: "text", Text: "hi"}}}},
+		},
+		Tools:    &ToolSet{Definitions: inputTools, Executor: exec},
+		MaxSteps: 5,
+	})
+	for ev := range ch {
+		if ev.Type == StepEventError {
+			t.Fatalf("unexpected error: %v", ev.Error)
+		}
+	}
+
+	if len(rm.requests) != 3 {
+		t.Fatalf("expected 3 model calls (2 tool + 1 text), got %d", len(rm.requests))
+	}
+	for i, r := range rm.requests {
+		if len(r.Tools) != len(inputTools) {
+			t.Errorf("step %d: tools stripped — expected %d tools, got %d",
+				i, len(inputTools), len(r.Tools))
+		}
+	}
+}
+
+// TestRunLoop_MaxStepsExhausted_OnFinishUsesLastStepSr verifies the OnFinish
+// callback receives the actual last-step streamResult (FinishReasonToolCalls)
+// instead of a faked FinishReasonStop that the old emitFinalGeneration path
+// used to synthesize. Matches ai-sdk-node: honest signal about loop state.
+func TestRunLoop_MaxStepsExhausted_OnFinishUsesLastStepSr(t *testing.T) {
+	exec := &mockExecutor{}
+	calls := [][]StreamEvent{
+		{toolCallEvt(0, "tc", "loop", `{}`), finishEvt(FinishReasonToolCalls)},
+		{toolCallEvt(0, "tc", "loop", `{}`), finishEvt(FinishReasonToolCalls)},
+	}
+	model := &mockModel{calls: calls}
+
+	var finishEvent FinishEvent
+	var finishSeen bool
+	ch := Run(context.Background(), RunParams{
+		Model:    model,
+		Tools:    &ToolSet{Executor: exec},
+		MaxSteps: 2,
+		Callbacks: &LifecycleCallbacks{
+			OnFinish: func(event FinishEvent) {
+				finishEvent = event
+				finishSeen = true
+			},
+		},
+	})
+	for ev := range ch {
+		if ev.Type == StepEventError {
+			t.Fatalf("unexpected error: %v", ev.Error)
+		}
+	}
+
+	if !finishSeen {
+		t.Fatal("OnFinish was not called")
+	}
+	if finishEvent.FinishReason != FinishReasonToolCalls {
+		t.Errorf("OnFinish.FinishReason: expected ToolCalls (honest), got %v", finishEvent.FinishReason)
+	}
+	if len(finishEvent.Steps) != 2 {
+		t.Errorf("expected 2 completed steps, got %d", len(finishEvent.Steps))
+	}
+}
+
+// recordingModel wraps mockModel and records each Request received.
+type recordingModel struct {
+	mockModel
+	requests []Request
+}
+
+func (m *recordingModel) Stream(ctx context.Context, req Request) (<-chan StreamEvent, error) {
+	m.requests = append(m.requests, req)
+	return m.mockModel.Stream(ctx, req)
+}
+
 func TestParseStructuredOutput_ValidJSON(t *testing.T) {
 	raw := `{"name":"Alice","age":30}`
 	got := parseStructuredOutput(raw)
