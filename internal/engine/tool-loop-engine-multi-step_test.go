@@ -183,13 +183,14 @@ func TestRunLoop_MaxStepsExhausted(t *testing.T) {
 		MaxSteps: 3,
 	})
 
-	var doneCount, stepStarts int
+	var doneCount, stepStarts, stepEnds int
 	var lastFinish FinishReason
 	for ev := range ch {
 		switch ev.Type {
 		case StepEventStepStart:
 			stepStarts++
 		case StepEventStepEnd:
+			stepEnds++
 			lastFinish = ev.FinishReason
 		case StepEventDone:
 			doneCount++
@@ -202,6 +203,9 @@ func TestRunLoop_MaxStepsExhausted(t *testing.T) {
 	}
 	if stepStarts != 3 {
 		t.Errorf("expected exactly 3 step starts (no forced final pass), got %d", stepStarts)
+	}
+	if stepEnds != 3 {
+		t.Errorf("expected exactly 3 step ends, got %d", stepEnds)
 	}
 	if lastFinish != FinishReasonToolCalls {
 		t.Errorf("expected last step finish=ToolCalls (honest exit), got %v", lastFinish)
