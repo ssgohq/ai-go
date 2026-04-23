@@ -72,6 +72,11 @@ func WithSmoothStream(ss *SmoothStream) Option {
 	return func(r *GenerateTextRequest) { r.SmoothStream = ss }
 }
 
+// WithExperimentalRepairToolCall enables automatic repair for invalid tool calls.
+func WithExperimentalRepairToolCall(fn ExperimentalRepairToolCallFunc) Option {
+	return func(r *GenerateTextRequest) { r.ExperimentalRepairToolCall = fn }
+}
+
 // WithParallelToolExecution enables parallel execution of tool calls within a step.
 // By default, tool calls are executed sequentially.
 func WithParallelToolExecution(enabled bool) Option {

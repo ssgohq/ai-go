@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -127,6 +128,66 @@ func TestRunLoop_SingleToolCall(t *testing.T) {
 	}
 	if len(exec.called) != 1 || exec.called[0] != "get_time" {
 		t.Errorf("expected get_time to be called, got %v", exec.called)
+	}
+}
+
+func TestRunLoop_RepairToolCall_UnknownToolName(t *testing.T) {
+	exec := &mockExecutor{results: map[string]string{"search": `{"ok":true}`}}
+	model := &mockModel{calls: [][]StreamEvent{
+		{toolCallEvt(0, "tc1", "Search", `{"q":"golang"}`), finishEvt(FinishReasonToolCalls)},
+		{textEvt("done"), finishEvt(FinishReasonStop)},
+	}}
+
+	var invalidCount int
+	var repairedResult *ToolResult
+	ch := Run(context.Background(), RunParams{
+		Model: model,
+		Request: Request{
+			Messages: []Message{{Role: "user", Content: []ContentPart{{Type: "text", Text: "search"}}}},
+		},
+		Tools: &ToolSet{
+			Definitions: []ToolDefinition{{Name: "search"}},
+			Executor:    exec,
+		},
+		RepairToolCall: func(_ context.Context, input ToolCallRepairContext) (*ToolCallInfo, error) {
+			if input.ToolCall.Name != "Search" {
+				t.Fatalf("expected original tool call name, got %q", input.ToolCall.Name)
+			}
+			var noSuchToolErr *NoSuchToolError
+			if !errors.As(input.Error, &noSuchToolErr) {
+				t.Fatalf("expected NoSuchToolError, got %T", input.Error)
+			}
+			return &ToolCallInfo{
+				ID:   input.ToolCall.ID,
+				Name: "search",
+				Args: input.ToolCall.Args,
+			}, nil
+		},
+		MaxSteps: 5,
+	})
+
+	for ev := range ch {
+		switch ev.Type {
+		case StepEventToolCallInvalid:
+			invalidCount++
+		case StepEventToolResult:
+			repairedResult = ev.ToolResult
+		case StepEventError:
+			t.Fatalf("unexpected error: %v", ev.Error)
+		}
+	}
+
+	if invalidCount != 0 {
+		t.Fatalf("expected repaired tool call to avoid invalid events, got %d", invalidCount)
+	}
+	if repairedResult == nil {
+		t.Fatal("expected repaired tool result")
+	}
+	if repairedResult.Name != "search" {
+		t.Fatalf("expected repaired tool result to use search, got %q", repairedResult.Name)
+	}
+	if len(exec.called) != 1 || exec.called[0] != "search" {
+		t.Fatalf("expected repaired tool name to execute, got %v", exec.called)
 	}
 }
 

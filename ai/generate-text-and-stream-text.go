@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/open-ai-sdk/ai-go/internal/engine"
 )
@@ -32,12 +33,13 @@ func GenerateText(ctx context.Context, req GenerateTextRequest) (*GenerateTextRe
 			}
 
 		case engine.StepEventToolCallStart:
-			if currentStep != nil {
-				currentStep.ToolCalls = append(currentStep.ToolCalls, ToolCallOutput{
-					ID:   ev.ToolCallID,
-					Name: ev.ToolCallName,
-				})
-			}
+			handleToolCallStart(ev, currentStep)
+
+		case engine.StepEventToolCallDelta:
+			handleToolCallDelta(ev, currentStep)
+
+		case engine.StepEventToolCallReady:
+			handleToolCallReady(ev, currentStep)
 
 		case engine.StepEventToolResult:
 			currentStep = handleToolResult(ev, result, currentStep)
@@ -52,7 +54,7 @@ func GenerateText(ctx context.Context, req GenerateTextRequest) (*GenerateTextRe
 			handleFileDelta(ev, result, currentStep)
 
 		case engine.StepEventStepEnd:
-			currentStep = handleStepEnd(ev, result, currentStep)
+			currentStep = handleStepEnd(ev, result, currentStep, req.Tools)
 
 		case engine.StepEventStructuredOutput:
 			result.StructuredOutput = ev.StructuredOutput
@@ -62,7 +64,56 @@ func GenerateText(ctx context.Context, req GenerateTextRequest) (*GenerateTextRe
 		}
 	}
 
+	result.Response = Response{Messages: ResponseMessagesForSteps(result.Steps, req.Tools)}
 	return result, nil
+}
+
+func handleToolCallStart(ev engine.StepEvent, step *StepOutput) {
+	if step == nil {
+		return
+	}
+	step.ToolCalls = append(step.ToolCalls, ToolCallOutput{
+		ID:               ev.ToolCallID,
+		Name:             ev.ToolCallName,
+		Args:             json.RawMessage(ev.ToolCallArgsDelta),
+		ThoughtSignature: ev.ThoughtSignature,
+	})
+}
+
+func handleToolCallDelta(ev engine.StepEvent, step *StepOutput) {
+	if step == nil || ev.ToolCallArgsDelta == "" {
+		return
+	}
+	for i := range step.ToolCalls {
+		if step.ToolCalls[i].ID == ev.ToolCallID {
+			step.ToolCalls[i].Args = append(step.ToolCalls[i].Args, ev.ToolCallArgsDelta...)
+			return
+		}
+	}
+}
+
+func handleToolCallReady(ev engine.StepEvent, step *StepOutput) {
+	if step == nil {
+		return
+	}
+	for i := range step.ToolCalls {
+		if step.ToolCalls[i].ID == ev.ToolCallID {
+			step.ToolCalls[i].Name = ev.ToolCallName
+			if ev.ToolCallArgsDelta != "" {
+				step.ToolCalls[i].Args = json.RawMessage(ev.ToolCallArgsDelta)
+			}
+			if ev.ThoughtSignature != "" {
+				step.ToolCalls[i].ThoughtSignature = ev.ThoughtSignature
+			}
+			return
+		}
+	}
+	step.ToolCalls = append(step.ToolCalls, ToolCallOutput{
+		ID:               ev.ToolCallID,
+		Name:             ev.ToolCallName,
+		Args:             json.RawMessage(ev.ToolCallArgsDelta),
+		ThoughtSignature: ev.ThoughtSignature,
+	})
 }
 
 func handleToolResult(ev engine.StepEvent, result *GenerateTextResult, step *StepOutput) *StepOutput {
@@ -136,7 +187,7 @@ func handleFileDelta(ev engine.StepEvent, result *GenerateTextResult, step *Step
 	}
 }
 
-func handleStepEnd(ev engine.StepEvent, result *GenerateTextResult, step *StepOutput) *StepOutput {
+func handleStepEnd(ev engine.StepEvent, result *GenerateTextResult, step *StepOutput, tools *ToolSet) *StepOutput {
 	if step == nil {
 		return nil
 	}
@@ -144,6 +195,7 @@ func handleStepEnd(ev engine.StepEvent, result *GenerateTextResult, step *StepOu
 	step.RawFinishReason = ev.RawFinishReason
 	step.ProviderMetadata = ev.ProviderMetadata
 	step.Warnings = fromEngineWarnings(ev.Warnings)
+	step.Response = Response{Messages: ResponseMessagesForStep(*step, tools)}
 	result.Steps = append(result.Steps, *step)
 	result.FinishReason = FinishReason(ev.FinishReason)
 	result.RawFinishReason = ev.RawFinishReason
@@ -161,12 +213,33 @@ func StreamText(ctx context.Context, req GenerateTextRequest) *StreamResult {
 	if req.SmoothStream != nil {
 		ch = req.SmoothStream.Transform(ctx, ch)
 	}
-	return NewStreamResult(ch)
+	return NewStreamResultWithTools(ch, req.Tools)
 }
 
 // toEngineParams converts a public GenerateTextRequest to engine.RunParams.
 // It also wraps the ai.LanguageModel to satisfy engine.Model.
 func toEngineParams(req GenerateTextRequest) engine.RunParams {
+	engReq, engTools := toEngineRequest(req)
+	stopWhen := toEngineStopWhen(req.StopWhen)
+	engPrepareStep := toEnginePrepareStep(req.PrepareStep)
+	repairToolCall := toEngineRepairToolCall(req.ExperimentalRepairToolCall)
+	engCallbacks := toEngineLifecycleCallbacks(req)
+
+	return engine.RunParams{
+		Model:                 &engineModelAdapter{req.Model},
+		Request:               engReq,
+		Tools:                 engTools,
+		StopWhen:              stopWhen,
+		MaxSteps:              req.MaxSteps,
+		PrepareStep:           engPrepareStep,
+		RepairToolCall:        repairToolCall,
+		Callbacks:             engCallbacks,
+		ParallelToolExecution: req.ParallelToolExecution,
+		MaxParallelTools:      req.MaxParallelTools,
+	}
+}
+
+func toEngineRequest(req GenerateTextRequest) (engine.Request, *engine.ToolSet) {
 	engReq := engine.Request{
 		System:          req.System,
 		Messages:        toEngineMessages(req.Messages),
@@ -187,127 +260,179 @@ func toEngineParams(req GenerateTextRequest) engine.RunParams {
 		engReq.ToolChoice = &engine.ToolChoice{Type: req.ToolChoice.Type, ToolName: req.ToolChoice.ToolName}
 	}
 
-	var engTools *engine.ToolSet
-	if req.Tools != nil {
-		defs := make([]engine.ToolDefinition, len(req.Tools.Definitions))
-		for i, d := range req.Tools.Definitions {
-			defs[i] = engine.ToolDefinition{
-				Name:          d.Name,
-				Description:   d.Description,
-				InputSchema:   d.InputSchema,
-				ToModelOutput: d.ToModelOutput,
-			}
-		}
-		engTools = &engine.ToolSet{
-			Definitions: defs,
-			Executor:    req.Tools.Executor,
-		}
-		engReq.Tools = defs
-
-		if len(req.ActiveTools) > 0 {
-			engReq.Tools = engineFilterTools(defs, req.ActiveTools)
-		}
+	if req.Tools == nil {
+		return engReq, nil
 	}
 
-	var stopWhen engine.StopCondition
-	if req.StopWhen != nil {
-		sw := req.StopWhen
-		stopWhen = func(step int, r *engine.StepResult) bool {
-			return sw(step, &StepResult{
-				HasToolCalls: r.HasToolCalls,
-				ToolNames:    r.ToolNames,
-				Text:         r.Text,
+	defs := make([]engine.ToolDefinition, len(req.Tools.Definitions))
+	for i, d := range req.Tools.Definitions {
+		defs[i] = engine.ToolDefinition{
+			Name:          d.Name,
+			Description:   d.Description,
+			InputSchema:   d.InputSchema,
+			ToModelOutput: d.ToModelOutput,
+		}
+	}
+	engReq.Tools = defs
+	if len(req.ActiveTools) > 0 {
+		engReq.Tools = engineFilterTools(defs, req.ActiveTools)
+	}
+
+	return engReq, &engine.ToolSet{
+		Definitions: defs,
+		Executor:    req.Tools.Executor,
+	}
+}
+
+func toEngineStopWhen(stopWhen StopCondition) engine.StopCondition {
+	if stopWhen == nil {
+		return nil
+	}
+	return func(step int, r *engine.StepResult) bool {
+		return stopWhen(step, &StepResult{
+			HasToolCalls: r.HasToolCalls,
+			ToolNames:    r.ToolNames,
+			Text:         r.Text,
+		})
+	}
+}
+
+func toEnginePrepareStep(prepare PrepareStepFunc) engine.PrepareStepFunc {
+	if prepare == nil {
+		return nil
+	}
+	return func(ectx engine.PrepareStepContext) *engine.PrepareStepResult {
+		aiCtx := PrepareStepContext{StepNumber: ectx.StepNumber}
+		for _, s := range ectx.Steps {
+			aiCtx.Steps = append(aiCtx.Steps, PrepareStepInfo{
+				StepNumber:   s.StepNumber,
+				HasToolCalls: s.HasToolCalls,
+				ToolNames:    s.ToolNames,
+				Text:         s.Text,
+				FinishReason: FinishReason(s.FinishReason),
 			})
 		}
+		result := prepare(aiCtx)
+		if result == nil {
+			return nil
+		}
+		engResult := &engine.PrepareStepResult{
+			ActiveTools:     result.ActiveTools,
+			System:          result.System,
+			ProviderOptions: result.ProviderOptions,
+		}
+		if result.Model != nil {
+			engResult.Model = &engineModelAdapter{result.Model}
+		}
+		if result.ToolChoice != nil {
+			engResult.ToolChoice = &engine.ToolChoice{
+				Type:     result.ToolChoice.Type,
+				ToolName: result.ToolChoice.ToolName,
+			}
+		}
+		return engResult
+	}
+}
+
+func toEngineRepairToolCall(fn ExperimentalRepairToolCallFunc) engine.ToolCallRepairFunc {
+	if fn == nil {
+		return nil
+	}
+	return func(ctx context.Context, input engine.ToolCallRepairContext) (*engine.ToolCallInfo, error) {
+		publicInput := RepairToolCallInput{
+			System:   input.System,
+			Messages: fromEngineMessages(input.Messages),
+			ToolCall: ToolCallOutput{
+				ID:               input.ToolCall.ID,
+				Name:             input.ToolCall.Name,
+				Args:             json.RawMessage(input.ToolCall.Args),
+				ThoughtSignature: input.ToolCall.ThoughtSignature,
+			},
+			Tools: fromEngineToolSet(input.Tools),
+			Error: fromEngineToolCallError(input.Error),
+		}
+		repaired, err := fn(ctx, publicInput)
+		if err != nil {
+			return nil, err
+		}
+		if repaired == nil {
+			return nil, nil
+		}
+
+		result := &engine.ToolCallInfo{
+			ID:               input.ToolCall.ID,
+			Name:             input.ToolCall.Name,
+			Args:             input.ToolCall.Args,
+			ThoughtSignature: input.ToolCall.ThoughtSignature,
+		}
+		if repaired.ID != "" {
+			result.ID = repaired.ID
+		}
+		if repaired.Name != "" {
+			result.Name = repaired.Name
+		}
+		if repaired.Args != nil {
+			result.Args = string(repaired.Args)
+		}
+		if repaired.ThoughtSignature != "" {
+			result.ThoughtSignature = repaired.ThoughtSignature
+		}
+		return result, nil
+	}
+}
+
+func toEngineLifecycleCallbacks(req GenerateTextRequest) *engine.LifecycleCallbacks {
+	if req.OnStepFinish == nil && req.OnFinish == nil && req.OnChunk == nil && req.OnError == nil {
+		return nil
 	}
 
-	var engPrepareStep engine.PrepareStepFunc
-	if req.PrepareStep != nil {
-		engPrepareStep = func(ectx engine.PrepareStepContext) *engine.PrepareStepResult {
-			aiCtx := PrepareStepContext{StepNumber: ectx.StepNumber}
-			for _, s := range ectx.Steps {
-				aiCtx.Steps = append(aiCtx.Steps, PrepareStepInfo{
-					StepNumber:   s.StepNumber,
-					HasToolCalls: s.HasToolCalls,
-					ToolNames:    s.ToolNames,
-					Text:         s.Text,
-					FinishReason: FinishReason(s.FinishReason),
-				})
+	callbacks := &engine.LifecycleCallbacks{}
+	if req.OnStepFinish != nil {
+		callbacks.OnStepFinish = func(ev engine.StepFinishEvent) {
+			stepEvent := StepFinishEvent{
+				StepNumber:       ev.StepNumber,
+				Text:             ev.Text,
+				Reasoning:        ev.Reasoning,
+				ToolCalls:        fromEngineToolCalls(ev.ToolCalls),
+				ToolResults:      fromEngineToolResults(ev.ToolResults),
+				FinishReason:     FinishReason(ev.FinishReason),
+				Usage:            fromEngineUsagePtr(ev.Usage),
+				ProviderMetadata: ev.ProviderMetadata,
+				Warnings:         fromEngineWarnings(ev.Warnings),
 			}
-			result := req.PrepareStep(aiCtx)
-			if result == nil {
-				return nil
-			}
-			engResult := &engine.PrepareStepResult{
-				ActiveTools:     result.ActiveTools,
-				System:          result.System,
-				ProviderOptions: result.ProviderOptions,
-			}
-			if result.Model != nil {
-				engResult.Model = &engineModelAdapter{result.Model}
-			}
-			if result.ToolChoice != nil {
-				engResult.ToolChoice = &engine.ToolChoice{
-					Type:     result.ToolChoice.Type,
-					ToolName: result.ToolChoice.ToolName,
-				}
-			}
-			return engResult
+			stepEvent.Response = Response{Messages: ResponseMessagesForStep(StepOutput{
+				Text:        stepEvent.Text,
+				Reasoning:   stepEvent.Reasoning,
+				ToolCalls:   stepEvent.ToolCalls,
+				ToolResults: stepEvent.ToolResults,
+			}, req.Tools)}
+			req.OnStepFinish(stepEvent)
 		}
 	}
-
-	var engCallbacks *engine.LifecycleCallbacks
-	if req.OnStepFinish != nil || req.OnFinish != nil || req.OnChunk != nil || req.OnError != nil {
-		engCallbacks = &engine.LifecycleCallbacks{}
-		if req.OnStepFinish != nil {
-			fn := req.OnStepFinish
-			engCallbacks.OnStepFinish = func(ev engine.StepFinishEvent) {
-				fn(StepFinishEvent{
-					StepNumber:       ev.StepNumber,
-					ToolCalls:        fromEngineToolCalls(ev.ToolCalls),
-					ToolResults:      fromEngineToolResults(ev.ToolResults),
-					FinishReason:     FinishReason(ev.FinishReason),
-					Usage:            fromEngineUsagePtr(ev.Usage),
-					ProviderMetadata: ev.ProviderMetadata,
-					Warnings:         fromEngineWarnings(ev.Warnings),
-				})
+	if req.OnFinish != nil {
+		callbacks.OnFinish = func(ev engine.FinishEvent) {
+			steps := fromEngineStepInfos(ev.Steps, req.Tools)
+			finishEvent := FinishEvent{
+				Text:             ev.Text,
+				Reasoning:        ev.Reasoning,
+				Steps:            steps,
+				TotalUsage:       fromEngineUsage(ev.TotalUsage),
+				FinishReason:     FinishReason(ev.FinishReason),
+				ProviderMetadata: ev.ProviderMetadata,
 			}
-		}
-		if req.OnFinish != nil {
-			fn := req.OnFinish
-			engCallbacks.OnFinish = func(ev engine.FinishEvent) {
-				fn(FinishEvent{
-					Text:             ev.Text,
-					Reasoning:        ev.Reasoning,
-					Steps:            fromEngineStepInfos(ev.Steps),
-					TotalUsage:       fromEngineUsage(ev.TotalUsage),
-					FinishReason:     FinishReason(ev.FinishReason),
-					ProviderMetadata: ev.ProviderMetadata,
-				})
-			}
-		}
-		if req.OnChunk != nil {
-			fn := req.OnChunk
-			engCallbacks.OnChunk = func(ev engine.StepEvent) {
-				fn(toChunkEvent(ev))
-			}
-		}
-		if req.OnError != nil {
-			engCallbacks.OnError = req.OnError
+			finishEvent.Response = Response{Messages: ResponseMessagesForSteps(steps, req.Tools)}
+			req.OnFinish(finishEvent)
 		}
 	}
-
-	return engine.RunParams{
-		Model:                 &engineModelAdapter{req.Model},
-		Request:               engReq,
-		Tools:                 engTools,
-		StopWhen:              stopWhen,
-		MaxSteps:              req.MaxSteps,
-		PrepareStep:           engPrepareStep,
-		Callbacks:             engCallbacks,
-		ParallelToolExecution: req.ParallelToolExecution,
-		MaxParallelTools:      req.MaxParallelTools,
+	if req.OnChunk != nil {
+		callbacks.OnChunk = func(ev engine.StepEvent) {
+			req.OnChunk(toChunkEvent(ev))
+		}
 	}
+	if req.OnError != nil {
+		callbacks.OnError = req.OnError
+	}
+	return callbacks
 }
 
 func engineFilterTools(tools []engine.ToolDefinition, active []string) []engine.ToolDefinition {
@@ -330,9 +455,33 @@ func fromEngineToolCalls(tcs []engine.ToolCallInfo) []ToolCallOutput {
 	}
 	out := make([]ToolCallOutput, len(tcs))
 	for i, tc := range tcs {
-		out[i] = ToolCallOutput{ID: tc.ID, Name: tc.Name, Args: json.RawMessage(tc.Args)}
+		out[i] = ToolCallOutput{
+			ID:               tc.ID,
+			Name:             tc.Name,
+			Args:             json.RawMessage(tc.Args),
+			ThoughtSignature: tc.ThoughtSignature,
+		}
 	}
 	return out
+}
+
+func fromEngineToolSet(ts *engine.ToolSet) *ToolSet {
+	if ts == nil {
+		return nil
+	}
+	defs := make([]ToolDefinition, len(ts.Definitions))
+	for i, def := range ts.Definitions {
+		defs[i] = ToolDefinition{
+			Name:          def.Name,
+			Description:   def.Description,
+			InputSchema:   def.InputSchema,
+			ToModelOutput: def.ToModelOutput,
+		}
+	}
+	return &ToolSet{
+		Definitions: defs,
+		Executor:    ts.Executor,
+	}
 }
 
 func fromEngineToolResults(trs []engine.ToolResult) []ToolResult {
@@ -386,18 +535,56 @@ func fromEngineUsage(u engine.Usage) Usage {
 	}
 }
 
-func fromEngineStepInfos(steps []engine.StepResultInfo) []StepOutput {
+func fromEngineStepInfos(steps []engine.StepResultInfo, tools *ToolSet) []StepOutput {
 	if len(steps) == 0 {
 		return nil
 	}
 	out := make([]StepOutput, len(steps))
 	for i, s := range steps {
 		out[i] = StepOutput{
-			Text:         s.Text,
-			FinishReason: FinishReason(s.FinishReason),
+			Text:             s.Text,
+			Reasoning:        s.Reasoning,
+			ToolCalls:        fromEngineToolCalls(s.ToolCalls),
+			ToolResults:      fromEngineToolResults(s.ToolResults),
+			FinishReason:     FinishReason(s.FinishReason),
+			RawFinishReason:  s.RawFinishReason,
+			ProviderMetadata: s.ProviderMetadata,
+			Warnings:         fromEngineWarnings(s.Warnings),
 		}
+		if s.Usage != nil {
+			out[i].Usage = fromEngineUsage(*s.Usage)
+		}
+		out[i].Response = Response{Messages: ResponseMessagesForStep(out[i], tools)}
 	}
 	return out
+}
+
+func fromEngineToolCallError(err error) error {
+	var noSuchToolErr *engine.NoSuchToolError
+	if errors.As(err, &noSuchToolErr) {
+		if noSuchToolErr == nil {
+			return nil
+		}
+		available := append([]string(nil), noSuchToolErr.AvailableTools...)
+		return &NoSuchToolError{
+			ToolName:       noSuchToolErr.ToolName,
+			AvailableTools: available,
+		}
+	}
+
+	var invalidArgsErr *engine.InvalidToolArgumentsError
+	if errors.As(err, &invalidArgsErr) {
+		if invalidArgsErr == nil {
+			return nil
+		}
+		return &InvalidToolArgumentsError{
+			ToolName: invalidArgsErr.ToolName,
+			Args:     invalidArgsErr.Args,
+			Cause:    invalidArgsErr.Cause,
+		}
+	}
+
+	return err
 }
 
 func toChunkEvent(ev engine.StepEvent) ChunkEvent {

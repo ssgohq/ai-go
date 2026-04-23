@@ -17,7 +17,8 @@ import (
 // are not requested before the fan-out starts are automatically drained, so
 // callers never need to worry about deadlocks from unconsumed channels.
 type StreamResult struct {
-	src <-chan engine.StepEvent
+	src   <-chan engine.StepEvent
+	tools *ToolSet
 
 	textCh    chan string
 	eventsCh  chan engine.StepEvent
@@ -38,8 +39,15 @@ type StreamResult struct {
 
 // NewStreamResult wraps an engine step-event channel in a StreamResult.
 func NewStreamResult(ch <-chan engine.StepEvent) *StreamResult {
+	return NewStreamResultWithTools(ch, nil)
+}
+
+// NewStreamResultWithTools wraps an engine step-event channel and preserves the
+// tool definitions required to build response.messages in Consume().
+func NewStreamResultWithTools(ch <-chan engine.StepEvent, tools *ToolSet) *StreamResult {
 	sr := &StreamResult{
 		src:       ch,
+		tools:     tools,
 		textCh:    make(chan string, 64),
 		eventsCh:  make(chan engine.StepEvent, 64),
 		consumeCh: make(chan engine.StepEvent, 64),
@@ -194,12 +202,13 @@ func (sr *StreamResult) Consume() (*GenerateTextResult, error) {
 			}
 
 		case engine.StepEventToolCallStart:
-			if currentStep != nil {
-				currentStep.ToolCalls = append(currentStep.ToolCalls, ToolCallOutput{
-					ID:   ev.ToolCallID,
-					Name: ev.ToolCallName,
-				})
-			}
+			handleToolCallStart(ev, currentStep)
+
+		case engine.StepEventToolCallDelta:
+			handleToolCallDelta(ev, currentStep)
+
+		case engine.StepEventToolCallReady:
+			handleToolCallReady(ev, currentStep)
 
 		case engine.StepEventToolResult:
 			currentStep = handleToolResult(ev, result, currentStep)
@@ -210,8 +219,11 @@ func (sr *StreamResult) Consume() (*GenerateTextResult, error) {
 		case engine.StepEventSource:
 			handleSource(ev, result, currentStep)
 
+		case engine.StepEventFileDelta:
+			handleFileDelta(ev, result, currentStep)
+
 		case engine.StepEventStepEnd:
-			currentStep = handleStepEnd(ev, result, currentStep)
+			currentStep = handleStepEnd(ev, result, currentStep, sr.tools)
 
 		case engine.StepEventStructuredOutput:
 			result.StructuredOutput = ev.StructuredOutput
@@ -221,5 +233,6 @@ func (sr *StreamResult) Consume() (*GenerateTextResult, error) {
 		}
 	}
 
+	result.Response = Response{Messages: ResponseMessagesForSteps(result.Steps, sr.tools)}
 	return result, nil
 }

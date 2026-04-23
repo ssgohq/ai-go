@@ -133,11 +133,18 @@ type PrepareStepContext struct {
 
 // StepResultInfo holds information about a completed step for PrepareStep evaluation.
 type StepResultInfo struct {
-	StepNumber   int
-	HasToolCalls bool
-	ToolNames    []string
-	Text         string
-	FinishReason FinishReason
+	StepNumber       int
+	HasToolCalls     bool
+	ToolNames        []string
+	Text             string
+	Reasoning        string
+	ToolCalls        []ToolCallInfo
+	ToolResults      []ToolResult
+	Usage            *Usage
+	FinishReason     FinishReason
+	RawFinishReason  string
+	ProviderMetadata map[string]any
+	Warnings         []Warning
 }
 
 // PrepareStepResult holds per-step overrides returned by PrepareStep.
@@ -164,6 +171,8 @@ type LifecycleCallbacks struct {
 // StepFinishEvent holds data passed to OnStepFinish after each step.
 type StepFinishEvent struct {
 	StepNumber       int
+	Text             string
+	Reasoning        string
 	ToolCalls        []ToolCallInfo
 	ToolResults      []ToolResult
 	FinishReason     FinishReason
@@ -184,20 +193,65 @@ type FinishEvent struct {
 
 // ToolCallInfo describes a tool call for lifecycle callbacks.
 type ToolCallInfo struct {
-	ID   string
-	Name string
-	Args string
+	ID               string
+	Name             string
+	Args             string
+	ThoughtSignature string
+}
+
+// ToolCallRepairContext describes a tool call that failed validation.
+type ToolCallRepairContext struct {
+	System   string
+	Messages []Message
+	ToolCall ToolCallInfo
+	Tools    *ToolSet
+	Error    error
+}
+
+// ToolCallRepairFunc attempts to repair an invalid tool call before it is surfaced.
+type ToolCallRepairFunc func(ctx context.Context, input ToolCallRepairContext) (*ToolCallInfo, error)
+
+// NoSuchToolError indicates the model called a tool that is not active.
+type NoSuchToolError struct {
+	ToolName       string
+	AvailableTools []string
+}
+
+func (e *NoSuchToolError) Error() string {
+	if len(e.AvailableTools) == 0 {
+		return "unknown tool " + e.ToolName
+	}
+	return "unknown tool " + e.ToolName
+}
+
+// InvalidToolArgumentsError indicates that the tool call arguments were invalid.
+type InvalidToolArgumentsError struct {
+	ToolName string
+	Args     string
+	Cause    error
+}
+
+func (e *InvalidToolArgumentsError) Error() string {
+	return "invalid arguments for tool " + e.ToolName
+}
+
+func (e *InvalidToolArgumentsError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
 }
 
 // RunParams configures a single engine run.
 type RunParams struct {
-	Model       Model
-	Request     Request
-	Tools       *ToolSet
-	StopWhen    StopCondition
-	MaxSteps    int
-	PrepareStep PrepareStepFunc
-	Callbacks   *LifecycleCallbacks
+	Model          Model
+	Request        Request
+	Tools          *ToolSet
+	StopWhen       StopCondition
+	MaxSteps       int
+	PrepareStep    PrepareStepFunc
+	RepairToolCall ToolCallRepairFunc
+	Callbacks      *LifecycleCallbacks
 	// ParallelToolExecution enables parallel tool execution.
 	ParallelToolExecution bool
 	// MaxParallelTools limits concurrent tool executions. Default: 5.

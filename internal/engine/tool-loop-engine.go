@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -44,6 +45,9 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		req := params.Request
 		req.System = "" // already prepended as system message in history
 		req.Messages = history
+		if len(req.Tools) == 0 && params.Tools != nil && len(params.Tools.Definitions) > 0 {
+			req.Tools = params.Tools.Definitions
+		}
 
 		if params.PrepareStep != nil {
 			psResult := params.PrepareStep(PrepareStepContext{
@@ -95,7 +99,14 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 			out <- stepEndEv
 			emitOnStepFinish(params.Callbacks, step, nil, nil, sr)
 			completedSteps = append(completedSteps, StepResultInfo{
-				StepNumber: step, Text: fullText, FinishReason: sr.finish,
+				StepNumber:       step,
+				Text:             fullText,
+				Reasoning:        sr.reasoning,
+				Usage:            sr.usage,
+				FinishReason:     sr.finish,
+				RawFinishReason:  sr.rawFinish,
+				ProviderMetadata: sr.providerMeta,
+				Warnings:         sr.warnings,
 			})
 			emitStructuredOutput(ctx, out, params, history)
 			emitOnFinish(params.Callbacks, completedSteps, sr)
@@ -104,17 +115,19 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		}
 
 		toolCalls := acc.completed()
-		history = append(history, buildAssistantToolCallMessage(fullText, toolCalls))
+		history = append(history, buildAssistantToolCallMessage(fullText, sr.reasoning, toolCalls))
 
 		var toolNames []string
 		var stepToolCalls []ToolCallInfo
 		var stepToolResults []ToolResult
 		if params.ParallelToolExecution {
 			toolNames, stepToolCalls, stepToolResults = executeToolCallsParallel(
-				ctx, out, params.Tools, toolCalls, &history, params.MaxParallelTools,
+				ctx, out, params.Tools, params.RepairToolCall, req, toolCalls, &history, params.MaxParallelTools,
 			)
 		} else {
-			toolNames, stepToolCalls, stepToolResults = executeToolCalls(ctx, out, params.Tools, toolCalls, &history)
+			toolNames, stepToolCalls, stepToolResults = executeToolCalls(
+				ctx, out, params.Tools, params.RepairToolCall, req, toolCalls, &history,
+			)
 		}
 
 		out <- StepEvent{
@@ -128,8 +141,18 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		emitOnStepFinish(params.Callbacks, step, stepToolCalls, stepToolResults, sr)
 
 		completedSteps = append(completedSteps, StepResultInfo{
-			StepNumber: step, HasToolCalls: true, ToolNames: toolNames,
-			Text: fullText, FinishReason: sr.finish,
+			StepNumber:       step,
+			HasToolCalls:     true,
+			ToolNames:        toolNames,
+			Text:             fullText,
+			Reasoning:        sr.reasoning,
+			ToolCalls:        stepToolCalls,
+			ToolResults:      stepToolResults,
+			Usage:            sr.usage,
+			FinishReason:     sr.finish,
+			RawFinishReason:  sr.rawFinish,
+			ProviderMetadata: sr.providerMeta,
+			Warnings:         sr.warnings,
 		})
 
 		if params.StopWhen != nil {
@@ -297,28 +320,35 @@ func executeToolCalls(
 	ctx context.Context,
 	out chan<- StepEvent,
 	tools *ToolSet,
+	repair ToolCallRepairFunc,
+	req Request,
 	toolCalls []toolCallState,
 	history *[]Message,
 ) (toolNames []string, stepToolCalls []ToolCallInfo, stepToolResults []ToolResult) {
+	prepared := prepareToolCalls(ctx, tools, repair, req, toolCalls)
 	toolNames = make([]string, 0, len(toolCalls))
-	for _, tc := range toolCalls {
-		// Validate JSON args before executing. Invalid args are emitted as
-		// StepEventToolCallInvalid and an error result is appended to history
-		// so the model can retry in the next step.
-		if tc.args != "" && !json.Valid([]byte(tc.args)) {
+	for _, preparedCall := range prepared {
+		tc := preparedCall.tc
+		if preparedCall.invalidErr != nil {
 			out <- StepEvent{
 				Type:              StepEventToolCallInvalid,
 				ToolCallID:        tc.id,
 				ToolCallName:      tc.name,
 				ToolCallArgsDelta: tc.args,
 			}
-			errOutput := fmt.Sprintf(`{"error":"invalid JSON arguments for tool %q"}`, tc.name)
+			errOutput := invalidToolCallOutput(tc, preparedCall.invalidErr)
 			*history = append(*history, buildToolResultMessage(tc.id, tc.name, errOutput))
 			toolNames = append(toolNames, tc.name)
 			continue
 		}
 
-		out <- StepEvent{Type: StepEventToolCallReady, ToolCallID: tc.id, ToolCallName: tc.name}
+		out <- StepEvent{
+			Type:              StepEventToolCallReady,
+			ToolCallID:        tc.id,
+			ToolCallName:      tc.name,
+			ToolCallArgsDelta: tc.args,
+			ThoughtSignature:  tc.thoughtSignature,
+		}
 
 		result := executeToolCall(ctx, tools, tc)
 
@@ -336,7 +366,12 @@ func executeToolCalls(
 		*history = append(*history, buildToolResultMessage(tc.id, tc.name, modelOutput))
 		out <- StepEvent{Type: StepEventToolResult, ToolResult: result}
 		toolNames = append(toolNames, tc.name)
-		stepToolCalls = append(stepToolCalls, ToolCallInfo{ID: tc.id, Name: tc.name, Args: tc.args})
+		stepToolCalls = append(stepToolCalls, ToolCallInfo{
+			ID:               tc.id,
+			Name:             tc.name,
+			Args:             tc.args,
+			ThoughtSignature: tc.thoughtSignature,
+		})
 		stepToolResults = append(stepToolResults, *result)
 	}
 	return toolNames, stepToolCalls, stepToolResults
@@ -347,6 +382,8 @@ func executeToolCallsParallel(
 	ctx context.Context,
 	out chan<- StepEvent,
 	tools *ToolSet,
+	repair ToolCallRepairFunc,
+	req Request,
 	toolCalls []toolCallState,
 	history *[]Message,
 	maxParallel int,
@@ -361,20 +398,22 @@ func executeToolCallsParallel(
 		result      *ToolResult
 		modelOutput string
 		valid       bool
+		invalidErr  error
 	}
 
-	results := make([]indexedResult, len(toolCalls))
+	prepared := prepareToolCalls(ctx, tools, repair, req, toolCalls)
+	results := make([]indexedResult, len(prepared))
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
 
-	for i, tc := range toolCalls {
-		// Validate JSON args before executing
-		if tc.args != "" && !json.Valid([]byte(tc.args)) {
+	for i, preparedCall := range prepared {
+		tc := preparedCall.tc
+		if preparedCall.invalidErr != nil {
 			results[i] = indexedResult{
-				idx: i, tc: tc, valid: false,
+				idx: i, tc: tc, valid: false, invalidErr: preparedCall.invalidErr,
 				result: &ToolResult{
 					ID: tc.id, Name: tc.name, Args: tc.args,
-					Output: fmt.Sprintf(`{"error":"invalid JSON arguments for tool %q"}`, tc.name),
+					Output: invalidToolCallOutput(tc, preparedCall.invalidErr),
 				},
 			}
 			continue
@@ -382,9 +421,11 @@ func executeToolCallsParallel(
 
 		// Emit ToolCallReady before execution starts (matches sequential contract)
 		out <- StepEvent{
-			Type:         StepEventToolCallReady,
-			ToolCallID:   tc.id,
-			ToolCallName: tc.name,
+			Type:              StepEventToolCallReady,
+			ToolCallID:        tc.id,
+			ToolCallName:      tc.name,
+			ToolCallArgsDelta: tc.args,
+			ThoughtSignature:  tc.thoughtSignature,
 		}
 
 		results[i] = indexedResult{idx: i, tc: tc, valid: true}
@@ -428,10 +469,170 @@ func executeToolCallsParallel(
 		out <- StepEvent{Type: StepEventToolResult, ToolResult: r.result}
 		*history = append(*history, buildToolResultMessage(r.tc.id, r.tc.name, r.modelOutput))
 		toolNames = append(toolNames, r.tc.name)
-		stepToolCalls = append(stepToolCalls, ToolCallInfo{ID: r.tc.id, Name: r.tc.name, Args: r.tc.args})
+		stepToolCalls = append(stepToolCalls, ToolCallInfo{
+			ID:               r.tc.id,
+			Name:             r.tc.name,
+			Args:             r.tc.args,
+			ThoughtSignature: r.tc.thoughtSignature,
+		})
 		stepToolResults = append(stepToolResults, *r.result)
 	}
 	return toolNames, stepToolCalls, stepToolResults
+}
+
+type preparedToolCall struct {
+	tc         toolCallState
+	invalidErr error
+}
+
+func prepareToolCalls(
+	ctx context.Context,
+	tools *ToolSet,
+	repair ToolCallRepairFunc,
+	req Request,
+	toolCalls []toolCallState,
+) []preparedToolCall {
+	stepTools := toolSetForStep(tools, req.Tools)
+	prepared := make([]preparedToolCall, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		fixed, err := validateAndRepairToolCall(ctx, stepTools, repair, req, tc)
+		prepared = append(prepared, preparedToolCall{
+			tc:         fixed,
+			invalidErr: err,
+		})
+	}
+	return prepared
+}
+
+func validateAndRepairToolCall(
+	ctx context.Context,
+	tools *ToolSet,
+	repair ToolCallRepairFunc,
+	req Request,
+	tc toolCallState,
+) (toolCallState, error) {
+	err := validateToolCall(tools, tc)
+	if err == nil || repair == nil {
+		return tc, err
+	}
+
+	repaired, repairErr := repair(ctx, ToolCallRepairContext{
+		System:   req.System,
+		Messages: req.Messages,
+		ToolCall: ToolCallInfo{
+			ID:               tc.id,
+			Name:             tc.name,
+			Args:             tc.args,
+			ThoughtSignature: tc.thoughtSignature,
+		},
+		Tools: tools,
+		Error: err,
+	})
+	if repairErr != nil {
+		return tc, repairErr
+	}
+	if repaired == nil {
+		return tc, err
+	}
+
+	if repaired.ID != "" {
+		tc.id = repaired.ID
+	}
+	if repaired.Name != "" {
+		tc.name = repaired.Name
+	}
+	if repaired.Args != "" || repaired.Args == "" && repaired.Args != tc.args {
+		tc.args = repaired.Args
+	}
+	if repaired.ThoughtSignature != "" {
+		tc.thoughtSignature = repaired.ThoughtSignature
+	}
+
+	return tc, validateToolCall(tools, tc)
+}
+
+func validateToolCall(tools *ToolSet, tc toolCallState) error {
+	if tools == nil {
+		return &NoSuchToolError{
+			ToolName:       tc.name,
+			AvailableTools: nil,
+		}
+	}
+	if len(tools.Definitions) == 0 {
+		if tc.args != "" && !json.Valid([]byte(tc.args)) {
+			return &InvalidToolArgumentsError{
+				ToolName: tc.name,
+				Args:     tc.args,
+			}
+		}
+		return nil
+	}
+	if _, ok := findToolDefinition(tools, tc.name); !ok {
+		return &NoSuchToolError{
+			ToolName:       tc.name,
+			AvailableTools: toolDefinitionNames(tools),
+		}
+	}
+	if tc.args != "" && !json.Valid([]byte(tc.args)) {
+		return &InvalidToolArgumentsError{
+			ToolName: tc.name,
+			Args:     tc.args,
+		}
+	}
+	return nil
+}
+
+func invalidToolCallOutput(tc toolCallState, err error) string {
+	var noSuchToolErr *NoSuchToolError
+	if errors.As(err, &noSuchToolErr) {
+		return fmt.Sprintf(`{"error":"unknown tool %q"}`, noSuchToolErr.ToolName)
+	}
+
+	var invalidArgsErr *InvalidToolArgumentsError
+	if errors.As(err, &invalidArgsErr) {
+		return fmt.Sprintf(`{"error":"invalid JSON arguments for tool %q"}`, invalidArgsErr.ToolName)
+	}
+
+	return fmt.Sprintf(`{"error":%q}`, err.Error())
+}
+
+func findToolDefinition(tools *ToolSet, name string) (*ToolDefinition, bool) {
+	if tools == nil {
+		return nil, false
+	}
+	for i := range tools.Definitions {
+		if tools.Definitions[i].Name == name {
+			return &tools.Definitions[i], true
+		}
+	}
+	return nil, false
+}
+
+func toolDefinitionNames(tools *ToolSet) []string {
+	if tools == nil || len(tools.Definitions) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(tools.Definitions))
+	for _, def := range tools.Definitions {
+		names = append(names, def.Name)
+	}
+	return names
+}
+
+func toolSetForStep(tools *ToolSet, activeDefs []ToolDefinition) *ToolSet {
+	if tools == nil {
+		return nil
+	}
+	if len(tools.Definitions) == 0 {
+		return &ToolSet{Executor: tools.Executor}
+	}
+	if len(activeDefs) == 0 {
+		return nil
+	}
+	return &ToolSet{
+		Definitions: activeDefs,
+		Executor:    tools.Executor,
+	}
 }
 
 func executeToolCall(ctx context.Context, tools *ToolSet, tc toolCallState) *ToolResult {
@@ -460,8 +661,11 @@ func buildInitialHistory(req Request) []Message {
 	return msgs
 }
 
-func buildAssistantToolCallMessage(text string, calls []toolCallState) Message {
-	parts := make([]ContentPart, 0, 1+len(calls))
+func buildAssistantToolCallMessage(text, reasoning string, calls []toolCallState) Message {
+	parts := make([]ContentPart, 0, 2+len(calls))
+	if reasoning != "" {
+		parts = append(parts, ContentPart{Type: "reasoning", Text: reasoning})
+	}
 	if text != "" {
 		parts = append(parts, ContentPart{Type: "text", Text: text})
 	}
@@ -532,6 +736,8 @@ func emitOnStepFinish(
 	}
 	cb.OnStepFinish(StepFinishEvent{
 		StepNumber:       step,
+		Text:             sr.text,
+		Reasoning:        sr.reasoning,
 		ToolCalls:        toolCalls,
 		ToolResults:      toolResults,
 		FinishReason:     sr.finish,
@@ -551,20 +757,25 @@ func emitOnFinish(cb *LifecycleCallbacks, steps []StepResultInfo, sr streamResul
 	var lastMeta map[string]any
 	for _, s := range steps {
 		totalText += s.Text
+		totalReasoning += s.Reasoning
 		lastFinish = s.FinishReason
-	}
-	if sr.usage != nil {
-		totalUsage = Usage{
-			PromptTokens:     sr.usage.PromptTokens,
-			CompletionTokens: sr.usage.CompletionTokens,
-			TotalTokens:      sr.usage.TotalTokens,
-			ReasoningTokens:  sr.usage.ReasoningTokens,
+		if s.Usage != nil {
+			totalUsage.PromptTokens += s.Usage.PromptTokens
+			totalUsage.CompletionTokens += s.Usage.CompletionTokens
+			totalUsage.TotalTokens += s.Usage.TotalTokens
+			totalUsage.ReasoningTokens += s.Usage.ReasoningTokens
+			totalUsage.CacheReadTokens += s.Usage.CacheReadTokens
+			totalUsage.CacheWriteTokens += s.Usage.CacheWriteTokens
+		}
+		if s.ProviderMetadata != nil {
+			lastMeta = s.ProviderMetadata
 		}
 	}
-	totalReasoning = sr.reasoning
-	lastMeta = sr.providerMeta
 	if sr.finish != "" {
 		lastFinish = sr.finish
+	}
+	if sr.providerMeta != nil {
+		lastMeta = sr.providerMeta
 	}
 	cb.OnFinish(FinishEvent{
 		Text:             totalText,
