@@ -33,10 +33,12 @@ func (m *mockModel) Stream(_ context.Context, _ Request) (<-chan StreamEvent, er
 type mockExecutor struct {
 	results map[string]string
 	called  []string
+	args    []string
 }
 
-func (e *mockExecutor) Execute(_ context.Context, name, _ string) (string, error) {
+func (e *mockExecutor) Execute(_ context.Context, name, args string) (string, error) {
 	e.called = append(e.called, name)
+	e.args = append(e.args, args)
 	if r, ok := e.results[name]; ok {
 		return r, nil
 	}
@@ -151,16 +153,15 @@ func TestRunLoop_RepairToolCall_UnknownToolName(t *testing.T) {
 		},
 		RepairToolCall: func(_ context.Context, input ToolCallRepairContext) (*ToolCallInfo, error) {
 			if input.ToolCall.Name != "Search" {
-				t.Fatalf("expected original tool call name, got %q", input.ToolCall.Name)
+				return nil, errors.New("expected original tool call name to be Search")
 			}
 			var noSuchToolErr *NoSuchToolError
 			if !errors.As(input.Error, &noSuchToolErr) {
-				t.Fatalf("expected NoSuchToolError, got %T", input.Error)
+				return nil, errors.New("expected NoSuchToolError during repair")
 			}
 			return &ToolCallInfo{
 				ID:   input.ToolCall.ID,
 				Name: "search",
-				Args: input.ToolCall.Args,
 			}, nil
 		},
 		MaxSteps: 5,
@@ -188,6 +189,67 @@ func TestRunLoop_RepairToolCall_UnknownToolName(t *testing.T) {
 	}
 	if len(exec.called) != 1 || exec.called[0] != "search" {
 		t.Fatalf("expected repaired tool name to execute, got %v", exec.called)
+	}
+	if len(exec.args) != 1 || exec.args[0] != `{"q":"golang"}` {
+		t.Fatalf("expected repaired execution to preserve args, got %v", exec.args)
+	}
+}
+
+func TestRunLoop_RepairToolCall_HistoryUsesRepairedToolCall(t *testing.T) {
+	exec := &mockExecutor{results: map[string]string{"search": `{"ok":true}`}}
+	model := &recordingModel{mockModel: mockModel{calls: [][]StreamEvent{
+		{toolCallEvt(0, "tc1", "Search", `{"q":"golang"}`), finishEvt(FinishReasonToolCalls)},
+		{textEvt("done"), finishEvt(FinishReasonStop)},
+	}}}
+
+	ch := Run(context.Background(), RunParams{
+		Model: model,
+		Request: Request{
+			Messages: []Message{{Role: "user", Content: []ContentPart{{Type: "text", Text: "search"}}}},
+		},
+		Tools: &ToolSet{
+			Definitions: []ToolDefinition{{Name: "search"}},
+			Executor:    exec,
+		},
+		RepairToolCall: func(_ context.Context, input ToolCallRepairContext) (*ToolCallInfo, error) {
+			return &ToolCallInfo{Name: "search"}, nil
+		},
+		MaxSteps: 5,
+	})
+
+	for ev := range ch {
+		if ev.Type == StepEventError {
+			t.Fatalf("unexpected error: %v", ev.Error)
+		}
+	}
+
+	if len(model.requests) != 2 {
+		t.Fatalf("expected 2 model requests, got %d", len(model.requests))
+	}
+	if len(model.requests[1].Messages) < 3 {
+		t.Fatalf("expected second request to include tool history, got %d messages", len(model.requests[1].Messages))
+	}
+
+	assistant := model.requests[1].Messages[len(model.requests[1].Messages)-2]
+	if assistant.Role != "assistant" {
+		t.Fatalf("expected assistant history message, got %q", assistant.Role)
+	}
+	if len(assistant.Content) != 1 || assistant.Content[0].Type != "tool_call" {
+		t.Fatalf("expected assistant tool-call history, got %+v", assistant.Content)
+	}
+	if assistant.Content[0].ToolCallName != "search" {
+		t.Fatalf("expected repaired tool-call name in history, got %q", assistant.Content[0].ToolCallName)
+	}
+	if assistant.Content[0].ToolCallArgs != `{"q":"golang"}` {
+		t.Fatalf("expected original args preserved in repaired history, got %q", assistant.Content[0].ToolCallArgs)
+	}
+
+	toolMsg := model.requests[1].Messages[len(model.requests[1].Messages)-1]
+	if toolMsg.Role != "tool" {
+		t.Fatalf("expected tool history message, got %q", toolMsg.Role)
+	}
+	if toolMsg.Content[0].ToolResultName != "search" {
+		t.Fatalf("expected repaired tool result name in history, got %q", toolMsg.Content[0].ToolResultName)
 	}
 }
 
@@ -403,5 +465,60 @@ func TestParseStructuredOutput_InvalidJSON(t *testing.T) {
 	got := parseStructuredOutput("not json at all")
 	if got != nil {
 		t.Error("expected nil for invalid JSON")
+	}
+}
+
+func TestValidateToolCall_InvalidArgsIncludesCause(t *testing.T) {
+	err := validateToolCall(&ToolSet{
+		Definitions: []ToolDefinition{{Name: "search"}},
+	}, toolCallState{
+		name: "search",
+		args: `{"q":}`,
+	})
+	if err == nil {
+		t.Fatal("expected invalid args error")
+	}
+
+	var invalidArgsErr *InvalidToolArgumentsError
+	if !errors.As(err, &invalidArgsErr) {
+		t.Fatalf("expected InvalidToolArgumentsError, got %T", err)
+	}
+	if invalidArgsErr.Cause == nil {
+		t.Fatal("expected InvalidToolArgumentsError.Cause to be populated")
+	}
+}
+
+func TestInvalidToolCallOutput_IsValidJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "unknown tool",
+			err: &NoSuchToolError{
+				ToolName: "search",
+			},
+		},
+		{
+			name: "invalid args",
+			err: &InvalidToolArgumentsError{
+				ToolName: "search",
+				Args:     `{"q":}`,
+				Cause:    errors.New("bad json"),
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := invalidToolCallOutput(toolCallState{name: "search"}, tc.err)
+			var payload map[string]string
+			if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+				t.Fatalf("expected valid JSON output, got %q (%v)", raw, err)
+			}
+			if payload["error"] == "" {
+				t.Fatalf("expected JSON error payload, got %q", raw)
+			}
+		})
 	}
 }

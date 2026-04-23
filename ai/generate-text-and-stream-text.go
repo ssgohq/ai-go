@@ -373,6 +373,7 @@ func toEngineRepairToolCall(fn ExperimentalRepairToolCallFunc) engine.ToolCallRe
 		}
 		if repaired.Args != nil {
 			result.Args = string(repaired.Args)
+			result.ArgsSet = true
 		}
 		if repaired.ThoughtSignature != "" {
 			result.ThoughtSignature = repaired.ThoughtSignature

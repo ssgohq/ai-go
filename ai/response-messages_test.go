@@ -214,10 +214,10 @@ func TestGenerateText_ExperimentalRepairToolCall(t *testing.T) {
 		ExperimentalRepairToolCall: func(_ context.Context, input ai.RepairToolCallInput) (*ai.ToolCallOutput, error) {
 			var noSuchToolErr *ai.NoSuchToolError
 			if !errors.As(input.Error, &noSuchToolErr) {
-				t.Fatalf("expected NoSuchToolError, got %T", input.Error)
+				return nil, errors.New("expected NoSuchToolError during repair")
 			}
 			if input.ToolCall.Name != "ADD" {
-				t.Fatalf("expected original tool name, got %q", input.ToolCall.Name)
+				return nil, errors.New("expected original tool name to be ADD")
 			}
 			return &ai.ToolCallOutput{
 				Name: "add",
@@ -236,6 +236,41 @@ func TestGenerateText_ExperimentalRepairToolCall(t *testing.T) {
 		t.Fatalf(
 			"expected repaired tool name in response message, got %q",
 			result.Steps[0].Response.Messages[0].Content[0].ToolCallName,
+		)
+	}
+}
+
+func TestGenerateText_ExperimentalRepairToolCall_PreservesArgsWhenOnlyNameChanges(t *testing.T) {
+	model := &repairToolCallModel{}
+	result, err := ai.GenerateText(context.Background(), ai.GenerateTextRequest{
+		Model:    model,
+		Messages: []ai.Message{ai.UserMessage("What is 1+2?")},
+		Tools: &ai.ToolSet{
+			Definitions: []ai.ToolDefinition{{Name: "add"}},
+			Executor:    &addExecutor{},
+		},
+		MaxSteps: 5,
+		ExperimentalRepairToolCall: func(_ context.Context, input ai.RepairToolCallInput) (*ai.ToolCallOutput, error) {
+			return &ai.ToolCallOutput{Name: "add"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if string(result.Steps[0].ToolCalls[0].Args) != `{"a":1,"b":2}` {
+		t.Fatalf("expected repaired tool call to preserve args, got %q", result.Steps[0].ToolCalls[0].Args)
+	}
+	if result.Steps[0].Response.Messages[0].Content[0].ToolCallName != "add" {
+		t.Fatalf(
+			"expected repaired tool name in response message, got %q",
+			result.Steps[0].Response.Messages[0].Content[0].ToolCallName,
+		)
+	}
+	if string(result.Steps[0].Response.Messages[0].Content[0].ToolCallArgs) != `{"a":1,"b":2}` {
+		t.Fatalf(
+			"expected repaired response message to preserve args, got %q",
+			result.Steps[0].Response.Messages[0].Content[0].ToolCallArgs,
 		)
 	}
 }

@@ -115,18 +115,22 @@ func runLoop(ctx context.Context, out chan<- StepEvent, params RunParams) {
 		}
 
 		toolCalls := acc.completed()
-		history = append(history, buildAssistantToolCallMessage(fullText, sr.reasoning, toolCalls))
+		preparedToolCalls := prepareToolCalls(ctx, params.Tools, params.RepairToolCall, req, toolCalls)
+		history = append(
+			history,
+			buildAssistantToolCallMessage(fullText, sr.reasoning, preparedToolCallStates(preparedToolCalls)),
+		)
 
 		var toolNames []string
 		var stepToolCalls []ToolCallInfo
 		var stepToolResults []ToolResult
 		if params.ParallelToolExecution {
 			toolNames, stepToolCalls, stepToolResults = executeToolCallsParallel(
-				ctx, out, params.Tools, params.RepairToolCall, req, toolCalls, &history, params.MaxParallelTools,
+				ctx, out, params.Tools, preparedToolCalls, &history, params.MaxParallelTools,
 			)
 		} else {
 			toolNames, stepToolCalls, stepToolResults = executeToolCalls(
-				ctx, out, params.Tools, params.RepairToolCall, req, toolCalls, &history,
+				ctx, out, params.Tools, preparedToolCalls, &history,
 			)
 		}
 
@@ -320,13 +324,10 @@ func executeToolCalls(
 	ctx context.Context,
 	out chan<- StepEvent,
 	tools *ToolSet,
-	repair ToolCallRepairFunc,
-	req Request,
-	toolCalls []toolCallState,
+	prepared []preparedToolCall,
 	history *[]Message,
 ) (toolNames []string, stepToolCalls []ToolCallInfo, stepToolResults []ToolResult) {
-	prepared := prepareToolCalls(ctx, tools, repair, req, toolCalls)
-	toolNames = make([]string, 0, len(toolCalls))
+	toolNames = make([]string, 0, len(prepared))
 	for _, preparedCall := range prepared {
 		tc := preparedCall.tc
 		if preparedCall.invalidErr != nil {
@@ -370,6 +371,7 @@ func executeToolCalls(
 			ID:               tc.id,
 			Name:             tc.name,
 			Args:             tc.args,
+			ArgsSet:          true,
 			ThoughtSignature: tc.thoughtSignature,
 		})
 		stepToolResults = append(stepToolResults, *result)
@@ -382,9 +384,7 @@ func executeToolCallsParallel(
 	ctx context.Context,
 	out chan<- StepEvent,
 	tools *ToolSet,
-	repair ToolCallRepairFunc,
-	req Request,
-	toolCalls []toolCallState,
+	prepared []preparedToolCall,
 	history *[]Message,
 	maxParallel int,
 ) (toolNames []string, stepToolCalls []ToolCallInfo, stepToolResults []ToolResult) {
@@ -401,7 +401,6 @@ func executeToolCallsParallel(
 		invalidErr  error
 	}
 
-	prepared := prepareToolCalls(ctx, tools, repair, req, toolCalls)
 	results := make([]indexedResult, len(prepared))
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
@@ -452,7 +451,7 @@ func executeToolCallsParallel(
 	wg.Wait()
 
 	// Emit events and build history in original order
-	toolNames = make([]string, 0, len(toolCalls))
+	toolNames = make([]string, 0, len(prepared))
 	for _, r := range results {
 		if !r.valid {
 			out <- StepEvent{
@@ -473,6 +472,7 @@ func executeToolCallsParallel(
 			ID:               r.tc.id,
 			Name:             r.tc.name,
 			Args:             r.tc.args,
+			ArgsSet:          true,
 			ThoughtSignature: r.tc.thoughtSignature,
 		})
 		stepToolResults = append(stepToolResults, *r.result)
@@ -483,6 +483,17 @@ func executeToolCallsParallel(
 type preparedToolCall struct {
 	tc         toolCallState
 	invalidErr error
+}
+
+func preparedToolCallStates(prepared []preparedToolCall) []toolCallState {
+	if len(prepared) == 0 {
+		return nil
+	}
+	states := make([]toolCallState, 0, len(prepared))
+	for _, preparedCall := range prepared {
+		states = append(states, preparedCall.tc)
+	}
+	return states
 }
 
 func prepareToolCalls(
@@ -523,6 +534,7 @@ func validateAndRepairToolCall(
 			ID:               tc.id,
 			Name:             tc.name,
 			Args:             tc.args,
+			ArgsSet:          true,
 			ThoughtSignature: tc.thoughtSignature,
 		},
 		Tools: tools,
@@ -541,7 +553,7 @@ func validateAndRepairToolCall(
 	if repaired.Name != "" {
 		tc.name = repaired.Name
 	}
-	if repaired.Args != "" || repaired.Args == "" && repaired.Args != tc.args {
+	if repaired.ArgsSet {
 		tc.args = repaired.Args
 	}
 	if repaired.ThoughtSignature != "" {
@@ -559,11 +571,8 @@ func validateToolCall(tools *ToolSet, tc toolCallState) error {
 		}
 	}
 	if len(tools.Definitions) == 0 {
-		if tc.args != "" && !json.Valid([]byte(tc.args)) {
-			return &InvalidToolArgumentsError{
-				ToolName: tc.name,
-				Args:     tc.args,
-			}
+		if err := invalidToolArgumentsError(tc.name, tc.args); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -573,10 +582,22 @@ func validateToolCall(tools *ToolSet, tc toolCallState) error {
 			AvailableTools: toolDefinitionNames(tools),
 		}
 	}
-	if tc.args != "" && !json.Valid([]byte(tc.args)) {
+	if err := invalidToolArgumentsError(tc.name, tc.args); err != nil {
+		return err
+	}
+	return nil
+}
+
+func invalidToolArgumentsError(toolName, args string) *InvalidToolArgumentsError {
+	if args == "" {
+		return nil
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(args), &decoded); err != nil {
 		return &InvalidToolArgumentsError{
-			ToolName: tc.name,
-			Args:     tc.args,
+			ToolName: toolName,
+			Args:     args,
+			Cause:    err,
 		}
 	}
 	return nil
@@ -585,12 +606,12 @@ func validateToolCall(tools *ToolSet, tc toolCallState) error {
 func invalidToolCallOutput(tc toolCallState, err error) string {
 	var noSuchToolErr *NoSuchToolError
 	if errors.As(err, &noSuchToolErr) {
-		return fmt.Sprintf(`{"error":"unknown tool %q"}`, noSuchToolErr.ToolName)
+		return fmt.Sprintf(`{"error":%q}`, fmt.Sprintf("unknown tool %q", noSuchToolErr.ToolName))
 	}
 
 	var invalidArgsErr *InvalidToolArgumentsError
 	if errors.As(err, &invalidArgsErr) {
-		return fmt.Sprintf(`{"error":"invalid JSON arguments for tool %q"}`, invalidArgsErr.ToolName)
+		return fmt.Sprintf(`{"error":%q}`, fmt.Sprintf("invalid JSON arguments for tool %q", invalidArgsErr.ToolName))
 	}
 
 	return fmt.Sprintf(`{"error":%q}`, err.Error())

@@ -193,9 +193,13 @@ type FinishEvent struct {
 
 // ToolCallInfo describes a tool call for lifecycle callbacks.
 type ToolCallInfo struct {
-	ID               string
-	Name             string
-	Args             string
+	ID   string
+	Name string
+	Args string
+	// ArgsSet indicates whether Args should overwrite the original args when a
+	// repair callback returns a replacement ToolCallInfo. Callers that only
+	// change the tool name should leave this false to preserve the original args.
+	ArgsSet          bool
 	ThoughtSignature string
 }
 
