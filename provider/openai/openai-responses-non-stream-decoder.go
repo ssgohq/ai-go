@@ -69,6 +69,12 @@ func decodeResponsesNonStream(body []byte, warnings []ai.Warning) (*ai.GenerateT
 		}
 	}
 
+	if len(result.Steps) == 0 && result.Text != "" {
+		result.Steps = []ai.StepOutput{{Text: result.Text}}
+	} else if len(result.Steps) > 0 && result.Text != "" {
+		result.Steps[len(result.Steps)-1].Text = result.Text
+	}
+
 	if resp.Usage != nil {
 		result.TotalUsage = ai.Usage{
 			PromptTokens:     resp.Usage.InputTokens,
@@ -85,6 +91,13 @@ func decodeResponsesNonStream(body []byte, warnings []ai.Warning) (*ai.GenerateT
 			"responseId": resp.ID,
 		},
 	}
+	for i := range result.Steps {
+		result.Steps[i].FinishReason = result.FinishReason
+		result.Steps[i].RawFinishReason = result.RawFinishReason
+		result.Steps[i].ProviderMetadata = result.ProviderMetadata
+		result.Steps[i].Response = ai.Response{Messages: ai.ResponseMessagesForStep(result.Steps[i], nil)}
+	}
+	result.Response = ai.Response{Messages: ai.ResponseMessagesForSteps(result.Steps, nil)}
 
 	return result, nil
 }

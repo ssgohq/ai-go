@@ -28,6 +28,9 @@ type GenerateTextRequest struct {
 	ProviderOptions map[string]any
 	// PrepareStep is called before each tool-loop step to allow per-step overrides.
 	PrepareStep PrepareStepFunc
+	// ExperimentalRepairToolCall attempts to repair invalid or unknown tool calls
+	// before they are surfaced as invalid. Experimental and subject to change.
+	ExperimentalRepairToolCall ExperimentalRepairToolCallFunc
 	// ActiveTools filters the tool set to only these tool names. Nil means all tools.
 	ActiveTools []string
 	// OnStepFinish is called after each step completes.
@@ -64,13 +67,16 @@ type StepOutput struct {
 	Sources          []Source
 	// Files holds file/image outputs from the model.
 	Files []GeneratedFile
+	// Response mirrors AI SDK Node's step.response.messages for continuation.
+	Response Response
 }
 
 // ToolCallOutput holds the details of a single tool call made by the model.
 type ToolCallOutput struct {
-	ID   string
-	Name string
-	Args json.RawMessage
+	ID               string
+	Name             string
+	Args             json.RawMessage
+	ThoughtSignature string
 }
 
 // GenerateTextResult holds the full output of a GenerateText call.
@@ -88,6 +94,8 @@ type GenerateTextResult struct {
 	// Files holds file/image outputs from the model (aggregated across all steps).
 	Files            []GeneratedFile
 	StructuredOutput json.RawMessage
+	// Response mirrors AI SDK Node's response.messages for continuation.
+	Response Response
 }
 
 // PrepareStepContext provides information about the current step for the PrepareStep callback.
@@ -120,12 +128,15 @@ type PrepareStepFunc func(ctx PrepareStepContext) *PrepareStepResult
 // StepFinishEvent is passed to the OnStepFinish callback after each step.
 type StepFinishEvent struct {
 	StepNumber       int
+	Text             string
+	Reasoning        string
 	ToolCalls        []ToolCallOutput
 	ToolResults      []ToolResult
 	FinishReason     FinishReason
 	Usage            *Usage
 	ProviderMetadata map[string]any
 	Warnings         []Warning
+	Response         Response
 }
 
 // FinishEvent is passed to the OnFinish callback when the entire run completes.
@@ -136,6 +147,7 @@ type FinishEvent struct {
 	TotalUsage       Usage
 	FinishReason     FinishReason
 	ProviderMetadata map[string]any
+	Response         Response
 }
 
 // ChunkEvent wraps a streaming engine event for the OnChunk callback.

@@ -339,10 +339,16 @@ func TestLifecycleCallbacks_OnStepFinish(t *testing.T) {
 		t.Errorf("first step should be 0, got %d", stepEvents[0].StepNumber)
 	}
 	if len(stepEvents[0].ToolCalls) != 1 || stepEvents[0].ToolCalls[0].Name != "search" {
-		t.Errorf("first step should have search tool call, got %v", stepEvents[0].ToolCalls)
+		t.Fatalf("first step should have search tool call, got %v", stepEvents[0].ToolCalls)
+	}
+	if stepEvents[0].ToolCalls[0].Args != `{"q":"test"}` {
+		t.Errorf("first step should preserve tool args, got %q", stepEvents[0].ToolCalls[0].Args)
 	}
 	if stepEvents[1].StepNumber != 1 {
 		t.Errorf("second step should be 1, got %d", stepEvents[1].StepNumber)
+	}
+	if stepEvents[1].Text != "done" {
+		t.Errorf("second step should expose full text, got %q", stepEvents[1].Text)
 	}
 }
 
